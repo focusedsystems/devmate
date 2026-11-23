@@ -1,0 +1,820 @@
+import SwiftUI
+import AppKit
+import Charts
+import DevMateCore
+import DevMateGit
+
+// MARK: - Model
+
+/// What the Repos graphs show and the statistics behind it.
+@MainActor
+final class RepoInsightsModel: ObservableObject {
+    enum Scope: String, CaseIterable {
+        case repository, all
+
+        var title: String {
+            switch self {
+            case .repository: "This Repository"
+            case .all: "All Tracked"
+            }
+        }
+    }
+
+    enum Period: String, CaseIterable {
+        case month = "30d", quarter = "90d", half = "6m", year = "1y", all
+
+        var title: String {
+            switch self {
+            case .month: "30 Days"
+            case .quarter: "90 Days"
+            case .half: "6 Months"
+            case .year: "1 Year"
+            case .all: "All Time"
+            }
+        }
+
+        var since: Date? { self == .all ? nil : RepoStatsRange.parseSince(rawValue) }
+    }
+
+    enum Granularity: String, CaseIterable {
+        case automatic, day, week, month
+
+        var title: String {
+            switch self {
+            case .automatic: "Automatic"
+            case .day: "Daily"
+            case .week: "Weekly"
+            case .month: "Monthly"
+            }
+        }
+
+        var bucket: RepoStatsBucket? { RepoStatsBucket(rawValue: rawValue) }
+    }
+
+    @Published var scope: Scope = .init(rawValue: UserDefaults.standard.string(forKey: "repos.insights.scope") ?? "") ?? .repository {
+        didSet { UserDefaults.standard.set(scope.rawValue, forKey: "repos.insights.scope") }
+    }
+    @Published var period: Period = .init(rawValue: UserDefaults.standard.string(forKey: "repos.insights.period") ?? "") ?? .quarter {
+        didSet { UserDefaults.standard.set(period.rawValue, forKey: "repos.insights.period") }
+    }
+    @Published var granularity: Granularity = .init(rawValue: UserDefaults.standard.string(forKey: "repos.insights.granularity") ?? "") ?? .automatic {
+        didSet { UserDefaults.standard.set(granularity.rawValue, forKey: "repos.insights.granularity") }
+    }
+
+    @Published private(set) var report: RepoStatsReport?
+    @Published private(set) var summary: RepoStatsSummary?
+    @Published private(set) var isLoading = false
+    @Published private(set) var error: String?
+    /// The request the shown numbers answer, so a refresh of the same view
+    /// keeps them on screen until new ones arrive.
+    @Published private(set) var shownKey: String?
+
+    func key(selected: DevRepo?, tracked: [DevRepo]) -> String {
+        let target = scope == .all ? tracked.map(\.id).joined(separator: ",") : (selected?.id ?? "")
+        return [scope.rawValue, period.rawValue, granularity.rawValue, target].joined(separator: "|")
+    }
+
+    func load(selected: DevRepo?, tracked: [DevRepo], withheld: WithheldPaths) async {
+        let key = key(selected: selected, tracked: tracked)
+        isLoading = true
+        defer { isLoading = false }
+        let since = period.since
+        let bucket = granularity.bucket
+        switch scope {
+        case .repository:
+            guard let selected else { report = nil; shownKey = key; return }
+            do {
+                let result = RepoStatistics.report(try await selected.checkout(withheld).workingCopy.churnLog(since: since, until: Date(), ref: RepoStatistics.insightsRef), since: since, until: Date(), bucket: bucket, top: 12)
+                guard key == self.key(selected: selected, tracked: tracked) else { return }
+                report = result
+                error = nil
+            } catch {
+                report = nil
+                self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+        case .all:
+            let result = await RepoStatsSummary.load(tracked.map { $0.checkout(withheld) }, since: since, bucket: bucket, top: 12, ref: RepoStatistics.insightsRef)
+            guard key == self.key(selected: selected, tracked: tracked) else { return }
+            summary = result
+            error = nil
+        }
+        shownKey = key
+    }
+}
+
+// MARK: - Graphs strip
+
+/// The Repos segment's graphs: a repository's history, or every tracked
+/// repository's, as cards in the Development tab's Graphs strip — commits
+/// and lines changed over time, who commits, where the changes land, and
+/// when. Shown and hidden with the toolbar's Graphs button like every
+/// other tab's widgets; the statistics load only while it is shown.
+struct RepoInsightsWidgets: View {
+    @ObservedObject var model: RepoWorkspaceModel
+    @ObservedObject private var insights: RepoInsightsModel
+    /// The strip never takes more than this, so the workspace keeps the screen.
+    let maxHeight: CGFloat?
+    @State private var refreshToken = 0
+    @Environment(\.appFontScale) private var fontScale
+
+    /// The least a chart is given; a taller row gives it more.
+    static let chartHeight: CGFloat = 130
+    private static let cardHeight: CGFloat = 320
+
+    init(model: RepoWorkspaceModel, maxHeight: CGFloat? = nil) {
+        self.model = model
+        self.insights = model.insights
+        self.maxHeight = maxHeight
+    }
+
+    private var loadKey: String {
+        insights.key(selected: model.selected, tracked: model.tracked) + "#\(refreshToken)"
+    }
+
+    var body: some View {
+        WidgetsSection(maxHeight: maxHeight) {
+            controls
+                .widgetFullRow()
+                .task(id: loadKey) {
+                    await insights.load(selected: model.selected, tracked: model.tracked, withheld: model.slots.withheld)
+                }
+            if let error = insights.error {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .widgetFullRow()
+            }
+            switch insights.scope {
+            case .repository:
+                if let report = insights.report {
+                    repositoryCards(report)
+                } else {
+                    placeholder(insights.isLoading ? nil : "Select a repository with commits.")
+                }
+            case .all:
+                if let summary = insights.summary {
+                    summaryCards(summary)
+                } else {
+                    placeholder(nil)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func placeholder(_ message: String?) -> some View {
+        Group {
+            if let message {
+                WidgetEmptyState(message)
+            } else {
+                ProgressView("Reading history…").frame(maxWidth: .infinity).padding(.vertical, 20)
+            }
+        }
+        .widgetFullRow()
+    }
+
+    // MARK: One repository
+
+    @ViewBuilder
+    private func repositoryCards(_ report: RepoStatsReport) -> some View {
+        WidgetCard(title: "Totals", maxHeight: Self.cardHeight) {
+            StatTiles(totals: report.totals)
+        }
+        .widgetSpan(2)
+        WidgetCard(title: "Commits per \(report.bucket.rawValue)", maxHeight: Self.cardHeight) {
+            CommitsTimelineChart(points: report.timeline, bucket: report.bucket, height: Self.chartHeight)
+        }
+        .widgetSpan(2)
+        WidgetCard(title: "Lines changed per \(report.bucket.rawValue)", maxHeight: Self.cardHeight) {
+            ChurnChart(points: report.timeline, bucket: report.bucket, height: Self.chartHeight)
+        }
+        .widgetSpan(2)
+        WidgetCard(title: "Authors", maxHeight: Self.cardHeight) {
+            RankedBars(rows: report.contributors.prefix(8).map { .init(label: $0.name, value: $0.commits, detail: "+\($0.added) −\($0.removed)") }, unit: "commits")
+        }
+        WidgetCard(title: "Top-level folders", maxHeight: Self.cardHeight) {
+            RankedBars(rows: report.areas.prefix(8).map { .init(label: $0.path, value: $0.commits, detail: "+\($0.added) −\($0.removed)") }, unit: "commits")
+        }
+        WidgetCard(title: "Most-changed files", maxHeight: Self.cardHeight) {
+            FileActivityList(files: Array(report.files.prefix(8)), openFile: openFile)
+        }
+        .widgetSpan(2)
+        WidgetCard(title: "When commits happen", maxHeight: Self.cardHeight) {
+            ActivityHeatmap(cells: report.activity, height: Self.chartHeight)
+        }
+        .widgetSpan(2)
+    }
+
+    // MARK: All repositories
+
+    private struct StackPoint: Identifiable {
+        let start: Date
+        let series: String
+        let commits: Int
+        var id: String { "\(series)|\(start.timeIntervalSince1970)" }
+    }
+
+    /// The busiest repositories by name, the rest as Other.
+    private func seriesNames(_ summary: RepoStatsSummary) -> [String] {
+        Array(summary.rows.filter { $0.commits > 0 }.prefix(InsightsPalette.categorical.count).map(\.displayName))
+    }
+
+    private func stacked(_ summary: RepoStatsSummary) -> [StackPoint] {
+        let named = Set(seriesNames(summary))
+        var points: [StackPoint] = []
+        var other = Array(repeating: 0, count: summary.bucketStarts.count)
+        for row in summary.rows {
+            if named.contains(row.displayName) {
+                for (i, count) in row.timeline.enumerated() where count > 0 {
+                    points.append(StackPoint(start: summary.bucketStarts[i], series: row.displayName, commits: count))
+                }
+            } else {
+                for (i, count) in row.timeline.enumerated() { other[i] += count }
+            }
+        }
+        for (i, count) in other.enumerated() where count > 0 {
+            points.append(StackPoint(start: summary.bucketStarts[i], series: "Other", commits: count))
+        }
+        return points
+    }
+
+    @ViewBuilder
+    private func summaryCards(_ summary: RepoStatsSummary) -> some View {
+        let names = seriesNames(summary)
+        let hasOther = summary.rows.filter { $0.commits > 0 }.count > names.count
+        let domain = names + (hasOther ? ["Other"] : [])
+        let range = Array(InsightsPalette.categorical.prefix(names.count)) + (hasOther ? [InsightsPalette.other] : [])
+        WidgetCard(title: "Totals", maxHeight: Self.cardHeight) {
+            StatTiles(totals: summary.combined.totals)
+        }
+        .widgetSpan(2)
+        WidgetCard(title: "Commits per \(summary.bucket.rawValue) by repository", maxHeight: Self.cardHeight) {
+            Chart(stacked(summary)) { point in
+                BarMark(
+                    x: .value("Period", point.start, unit: summary.bucket.calendarUnit),
+                    y: .value("Commits", point.commits)
+                )
+                .foregroundStyle(by: .value("Repository", point.series))
+            }
+            .chartForegroundStyleScale(domain: domain, range: range)
+            .chartLegend(.hidden)
+            .chartXAxis {
+                AxisMarks { _ in
+                    AxisGridLine()
+                    AxisValueLabel().font(AppTextStyle.chartLabel(fontScale))
+                }
+            }
+            .chartYAxis {
+                AxisMarks { _ in
+                    AxisGridLine()
+                    AxisValueLabel().font(AppTextStyle.chartLabel(fontScale))
+                }
+            }
+            .frame(minHeight: Self.chartHeight)
+            .accessibilityLabel("Commits per \(summary.bucket.rawValue), stacked by repository")
+            WidgetChartLegend(items: Array(zip(domain, range)).map { ($0.0, $0.1) })
+        }
+        .widgetSpan(2)
+        WidgetCard(title: "Lines changed per \(summary.bucket.rawValue)", maxHeight: Self.cardHeight) {
+            ChurnChart(points: summary.combined.timeline, bucket: summary.bucket, height: Self.chartHeight)
+        }
+        .widgetSpan(2)
+        WidgetCard(title: "Authors", maxHeight: Self.cardHeight) {
+            RankedBars(rows: summary.combined.contributors.prefix(8).map { .init(label: $0.name, value: $0.commits, detail: "+\($0.added) −\($0.removed)") }, unit: "commits")
+        }
+        WidgetCard(title: "Behind upstream", maxHeight: Self.cardHeight) {
+            RankedBars(rows: summary.rows.filter { $0.behind > 0 }.sorted { $0.behind > $1.behind }.prefix(8).map { .init(label: $0.displayName, value: $0.behind, detail: $0.branch ?? "") }, unit: "commits behind")
+        }
+        WidgetCard(title: "Repositories", maxHeight: Self.cardHeight) {
+            ScrollView {
+                RepoSummaryTable(rows: summary.rows) { id in
+                    model.selectedId = id
+                    insights.scope = .repository
+                }
+            }
+        }
+        .widgetSpan(2)
+        WidgetCard(title: "When commits happen", maxHeight: Self.cardHeight) {
+            ActivityHeatmap(cells: summary.combined.activity, height: Self.chartHeight)
+        }
+        .widgetSpan(2)
+    }
+
+    // MARK: Controls
+
+    private var controls: some View {
+        HStack(spacing: 12) {
+            Picker("Scope", selection: $insights.scope) {
+                ForEach(RepoInsightsModel.Scope.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help("Statistics for the selected repository, or for every tracked repository together")
+
+            Picker("Period", selection: $insights.period) {
+                ForEach(RepoInsightsModel.Period.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .fixedSize()
+
+            Picker("Show", selection: $insights.granularity) {
+                ForEach(RepoInsightsModel.Granularity.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .fixedSize()
+
+            if insights.isLoading { ProgressView().controlSize(.small) }
+            Spacer(minLength: 8)
+            Text(caption)
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+            Button {
+                refreshToken += 1
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .help("Read origin/main again. Use Fetch to update the remote-tracking branch.")
+            .accessibilityLabel("Refresh Repository Statistics")
+        }
+        .controlSize(.small)
+    }
+
+    private var caption: String {
+        "\(RepoStatistics.insightsRef) · Merge commits excluded"
+    }
+
+    private func openFile(_ path: String) {
+        model.git.focusedPanel = .browse
+        model.open(path)
+    }
+}
+
+
+// MARK: - Palette
+
+/// Series colours in a fixed order, never cycled and never red: identity
+/// follows the repository, and anything past the last slot folds into Other.
+enum InsightsPalette {
+    static let categorical: [Color] = [.blue, .orange, .teal, .purple, .brown, .mint, .indigo]
+    static let other = Color.gray
+    static let added = Color.teal
+    static let removed = Color.orange
+    static let commits = Color.accentColor
+}
+
+private struct RepoSummaryTable: View {
+    let rows: [RepoStatsSummaryRow]
+    let select: (String) -> Void
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
+            GridRow {
+                Text("Repository")
+                Text("Commits").gridColumnAlignment(.trailing)
+                Text("Added").gridColumnAlignment(.trailing)
+                Text("Removed").gridColumnAlignment(.trailing)
+                Text("Ahead").gridColumnAlignment(.trailing)
+                Text("Behind").gridColumnAlignment(.trailing)
+                Text("Open changes").gridColumnAlignment(.trailing)
+                Text("Last commit")
+            }
+            .appFont(.caption, weight: .semibold)
+            .foregroundStyle(.secondary)
+            Divider()
+            ForEach(rows) { row in
+                GridRow {
+                    Button(row.displayName) { select(row.id) }
+                        .buttonStyle(.link)
+                        .lineLimit(1)
+                        .help(row.error ?? "Show \(row.displayName)'s insights")
+                    Text(row.commits, format: .number)
+                    Text("+\(row.added)")
+                    Text("−\(row.removed)")
+                    Text(row.ahead, format: .number)
+                    Text(row.behind, format: .number)
+                    Text(row.openChanges, format: .number)
+                    if let error = row.error, row.commits == 0 {
+                        Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).lineLimit(1)
+                    } else {
+                        Text(row.lastCommit.map { $0.formatted(.relative(presentation: .named)) } ?? "—")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .appFont(.callout)
+                .monospacedDigit()
+            }
+        }
+        .textSelection(.enabled)
+    }
+}
+
+// MARK: - Pieces
+
+private struct StatTiles: View {
+    let totals: RepoStatsReport.Totals
+
+    var body: some View {
+        Grid(horizontalSpacing: 6, verticalSpacing: 6) {
+            GridRow {
+                tile("Commits", totals.commits.formatted(), "point.3.connected.trianglepath.dotted")
+                tile("Authors", totals.authors.formatted(), "person.2")
+                tile("Files touched", totals.filesTouched.formatted(), "doc.on.doc")
+            }
+            GridRow {
+                tile("Lines added", "+" + totals.added.formatted(), "plus.forwardslash.minus")
+                tile("Lines removed", "−" + totals.removed.formatted(), "minus")
+                tile("Last commit", totals.lastCommit.map { $0.formatted(.relative(presentation: .named)) } ?? "—", "clock")
+            }
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private func tile(_ title: String, _ value: String, _ icon: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(title, systemImage: icon)
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(value)
+                .appFont(.title3, weight: .semibold)
+                .monospacedDigit()
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .textSelection(.enabled)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.18)))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+extension RepoStatsBucket {
+    var calendarUnit: Calendar.Component {
+        switch self {
+        case .day: .day
+        case .week: .weekOfYear
+        case .month: .month
+        }
+    }
+
+    func label(_ date: Date) -> String {
+        switch self {
+        case .day: date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+        case .week: "Week of " + date.formatted(.dateTime.month(.abbreviated).day().year())
+        case .month: date.formatted(.dateTime.month(.wide).year())
+        }
+    }
+}
+
+/// The bucket a hovered date falls in.
+private func point(at date: Date?, in points: [RepoStatsReport.TimelinePoint]) -> RepoStatsReport.TimelinePoint? {
+    guard let date else { return nil }
+    return points.last { $0.start <= date }
+}
+
+private struct CommitsTimelineChart: View {
+    let points: [RepoStatsReport.TimelinePoint]
+    let bucket: RepoStatsBucket
+    var height: CGFloat = 200
+    @State private var hovered: Date?
+    @Environment(\.appFontScale) private var fontScale
+
+    var body: some View {
+        let selected = point(at: hovered, in: points)
+        Chart {
+            ForEach(points) { point in
+                BarMark(
+                    x: .value("Period", point.start, unit: bucket.calendarUnit),
+                    y: .value("Commits", point.commits)
+                )
+                .foregroundStyle(InsightsPalette.commits.opacity(selected == nil || selected?.start == point.start ? 1 : 0.45))
+                .cornerRadius(2)
+            }
+            if let selected {
+                RuleMark(x: .value("Period", selected.start, unit: bucket.calendarUnit))
+                    .foregroundStyle(Color.secondary.opacity(0.25))
+                    .zIndex(-1)
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        HoverLabel(title: bucket.label(selected.start), lines: ["\(selected.commits) commit\(selected.commits == 1 ? "" : "s")"])
+                    }
+            }
+        }
+        .chartXSelection(value: $hovered)
+        .chartXAxis {
+            AxisMarks { _ in
+                AxisGridLine()
+                AxisValueLabel().font(AppTextStyle.chartLabel(fontScale))
+            }
+        }
+        .chartYAxis {
+            AxisMarks { _ in
+                AxisGridLine()
+                AxisValueLabel().font(AppTextStyle.chartLabel(fontScale))
+            }
+        }
+        .frame(minHeight: height)
+        .accessibilityLabel("Commits per \(bucket.rawValue)")
+    }
+}
+
+private struct ChurnChart: View {
+    let points: [RepoStatsReport.TimelinePoint]
+    let bucket: RepoStatsBucket
+    var height: CGFloat = 200
+    @State private var hovered: Date?
+    @State private var scale = RepoChurnScale.automatic
+    @Environment(\.appFontScale) private var fontScale
+
+    private var effectiveScale: RepoChurnScale {
+        scale == .automatic ? .recommended(for: points) : scale
+    }
+
+    private var compressedTicks: [Double] {
+        let peak = max(points.map { max($0.added, $0.removed) }.max() ?? 0, 1)
+        var ticks = [0.0]
+        for magnitude in RepoChurnScale.tickMagnitudes(peak: peak) {
+            let position = RepoChurnScale.compressed.position(magnitude)
+            ticks.append(contentsOf: [-position, position])
+        }
+        return ticks.sorted()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Picker("Scale", selection: $scale) {
+                    Text("Automatic").tag(RepoChurnScale.automatic)
+                    Text("Linear").tag(RepoChurnScale.linear)
+                    Text("Compressed").tag(RepoChurnScale.compressed)
+                }
+                .fixedSize()
+                .controlSize(.small)
+                Text(effectiveScale == .compressed ? "Compressed scale · all line counts retained" : "Linear scale")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .help("Compressed uses a signed logarithmic scale so large changes do not flatten ordinary activity. Hover shows exact line counts.")
+            chart
+            WidgetChartLegend(items: [("Added", InsightsPalette.added), ("Removed", InsightsPalette.removed)])
+        }
+    }
+
+    private var chart: some View {
+        let selected = point(at: hovered, in: points)
+        let resolvedScale = effectiveScale
+        let compressed = resolvedScale == .compressed
+        return Chart {
+            ForEach(points) { point in
+                BarMark(
+                    x: .value("Period", point.start, unit: bucket.calendarUnit),
+                    y: .value("Lines", resolvedScale.position(point.added))
+                )
+                .foregroundStyle(by: .value("Change", "Added"))
+                .accessibilityValue("\(point.added) lines added")
+                BarMark(
+                    x: .value("Period", point.start, unit: bucket.calendarUnit),
+                    y: .value("Lines", resolvedScale.position(-point.removed))
+                )
+                .foregroundStyle(by: .value("Change", "Removed"))
+                .accessibilityValue("\(point.removed) lines removed")
+            }
+            RuleMark(y: .value("Lines", 0))
+                .foregroundStyle(Color.secondary.opacity(0.5))
+                .lineStyle(StrokeStyle(lineWidth: 1))
+            if let selected {
+                RuleMark(x: .value("Period", selected.start, unit: bucket.calendarUnit))
+                    .foregroundStyle(Color.secondary.opacity(0.25))
+                    .zIndex(-1)
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        HoverLabel(title: bucket.label(selected.start), lines: ["+\(selected.added) added", "−\(selected.removed) removed"])
+                    }
+            }
+        }
+        .chartForegroundStyleScale(["Added": InsightsPalette.added, "Removed": InsightsPalette.removed])
+        .chartLegend(.hidden)
+        .chartXAxis {
+            AxisMarks { _ in
+                AxisGridLine()
+                AxisValueLabel().font(AppTextStyle.chartLabel(fontScale))
+            }
+        }
+        .chartYAxis {
+            if compressed {
+                AxisMarks(values: compressedTicks) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let position = value.as(Double.self) {
+                            Text((pow(10, abs(position)) - 1).rounded().formatted(.number.notation(.compactName)))
+                                .font(AppTextStyle.chartLabel(fontScale))
+                        }
+                    }
+                }
+            } else {
+                AxisMarks(values: .automatic(desiredCount: 5)) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let lines = value.as(Double.self) {
+                            Text(abs(lines).formatted(.number.notation(.compactName))).font(AppTextStyle.chartLabel(fontScale))
+                        }
+                    }
+                }
+            }
+        }
+        .chartXSelection(value: $hovered)
+        .frame(minHeight: height)
+        .accessibilityLabel("Lines added and removed per \(bucket.rawValue), \(compressed ? "compressed" : "linear") scale")
+    }
+}
+
+private struct HoverLabel: View {
+    let title: String
+    let lines: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).appFont(.caption, weight: .semibold)
+            ForEach(lines, id: \.self) { Text($0).appFont(.caption).monospacedDigit() }
+        }
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
+    }
+}
+
+private struct RankedRow: Identifiable {
+    let label: String
+    let value: Int
+    let detail: String
+    var id: String { label }
+}
+
+/// Label, bar, count and a secondary detail per row. Labels and numbers
+/// stay in text colours; only the bar carries the series colour.
+private struct RankedBars: View {
+    let rows: [RankedRow]
+    let unit: String
+
+    var body: some View {
+        if rows.isEmpty {
+            Text("Nothing in this period").appFont(.callout).foregroundStyle(.secondary)
+        } else {
+            let peak = max(rows.map(\.value).max() ?? 1, 1)
+            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 6) {
+                ForEach(rows) { row in
+                    GridRow {
+                        Text(row.label)
+                            .appFont(.callout)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: 120, alignment: .leading)
+                            .help(row.label)
+                            .frame(maxHeight: .infinity)
+                        GeometryReader { geo in
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(InsightsPalette.commits)
+                                .frame(width: max(3, geo.size.width * CGFloat(row.value) / CGFloat(peak)))
+                                .frame(maxHeight: .infinity, alignment: .center)
+                        }
+                        .frame(minWidth: 40, maxWidth: .infinity)
+                        .frame(height: 12)
+                        .frame(maxHeight: .infinity)
+                        Text(row.value, format: .number)
+                            .appFont(.callout, weight: .medium)
+                            .monospacedDigit()
+                            .gridColumnAlignment(.trailing)
+                            .frame(maxHeight: .infinity)
+                        Text(row.detail)
+                            .appFont(.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .frame(maxHeight: .infinity)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(row.label): \(row.value) \(unit), \(row.detail)")
+                }
+            }
+        }
+    }
+}
+
+private struct FileActivityList: View {
+    let files: [RepoStatsReport.PathActivity]
+    let openFile: (String) -> Void
+
+    var body: some View {
+        if files.isEmpty {
+            Text("Nothing in this period").appFont(.callout).foregroundStyle(.secondary)
+        } else {
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 5) {
+                GridRow {
+                    Text("File")
+                    Text("Commits").gridColumnAlignment(.trailing)
+                    Text("Added").gridColumnAlignment(.trailing)
+                    Text("Removed").gridColumnAlignment(.trailing)
+                }
+                .appFont(.caption, weight: .semibold)
+                .foregroundStyle(.secondary)
+                ForEach(files) { file in
+                    GridRow {
+                        Button {
+                            openFile(file.path)
+                        } label: {
+                            Text(file.path).lineLimit(1).truncationMode(.head)
+                        }
+                        .buttonStyle(.link)
+                        .help("Open \(file.path) in Files")
+                        .contextMenu {
+                            Button("Open in Files") { openFile(file.path) }
+                            Button("Copy Path") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(file.path, forType: .string)
+                            }
+                        }
+                        Text(file.commits, format: .number)
+                        Text("+\(file.added)")
+                        Text("−\(file.removed)")
+                    }
+                    .appFont(.callout)
+                    .monospacedDigit()
+                }
+            }
+        }
+    }
+}
+
+/// Commits by weekday and hour, darker for more. One hue, light to dark.
+private struct ActivityHeatmap: View {
+    let cells: [RepoStatsReport.ActivityCell]
+    var height: CGFloat = 190
+    @State private var hovered: RepoStatsReport.ActivityCell?
+    @Environment(\.appFontScale) private var fontScale
+
+    private static let weekdays = Calendar.current.shortWeekdaySymbols
+
+    var body: some View {
+        let grid = RepoStatsReport.ActivityCell.grid(cells)
+        let peak = max(cells.map(\.commits).max() ?? 1, 1)
+        VStack(alignment: .leading, spacing: 6) {
+            Chart(grid) { cell in
+                RectangleMark(
+                    xStart: .value("Hour start", Double(cell.hour) - 0.45),
+                    xEnd: .value("Hour end", Double(cell.hour) + 0.45),
+                    yStart: .value("Day start", Double(cell.weekday) - 0.42),
+                    yEnd: .value("Day end", Double(cell.weekday) + 0.42)
+                )
+                .foregroundStyle(InsightsPalette.commits.opacity(cell.commits == 0 ? 0.08 : 0.2 + 0.8 * Double(cell.commits) / Double(peak)))
+                .cornerRadius(2)
+                .accessibilityLabel("\(Self.weekdays[cell.weekday - 1]) \(String(format: "%02d:00", cell.hour))")
+                .accessibilityValue("\(cell.commits) commits")
+            }
+            .chartXScale(domain: -0.5...23.5)
+            .chartYScale(domain: .automatic(includesZero: false, reversed: true, dataType: Double.self) {
+                $0 = [0.5, 7.5]
+            })
+            .chartYAxis {
+                AxisMarks(position: .leading, values: Array(1...7)) { value in
+                    AxisValueLabel {
+                        if let weekday = value.as(Int.self) { Text(Self.weekdays[weekday - 1]).font(AppTextStyle.chartLabel(fontScale)) }
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: [0, 3, 6, 9, 12, 15, 18, 21]) { value in
+                    AxisValueLabel {
+                        if let hour = value.as(Int.self) { Text(String(format: "%02d:00", hour)).font(AppTextStyle.chartLabel(fontScale)) }
+                    }
+                }
+            }
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    Color.clear.contentShape(Rectangle())
+                        .onContinuousHover { phase in
+                            guard case let .active(location) = phase,
+                                  let anchor = proxy.plotFrame else { hovered = nil; return }
+                            let frame = geometry[anchor]
+                            guard frame.contains(location),
+                                  let hour = proxy.value(atX: location.x - frame.minX, as: Double.self),
+                                  let day = proxy.value(atY: location.y - frame.minY, as: Double.self) else { hovered = nil; return }
+                            let roundedHour = Int(hour.rounded())
+                            let weekday = Int(day.rounded())
+                            hovered = grid.first { $0.weekday == weekday && $0.hour == roundedHour }
+                        }
+                }
+            }
+            .frame(minHeight: height)
+            .accessibilityLabel("Commits by weekday and hour")
+            Text(hovered.map { "\(Self.weekdays[$0.weekday - 1]) \(String(format: "%02d:00", $0.hour)) · \($0.commits) commit\($0.commits == 1 ? "" : "s")" } ?? "Hover an hour to see its exact commit count")
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}

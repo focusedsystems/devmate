@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "app": {
+    "key": "example-app",
+    "id": "com.example.devmate-sample",
+    "file_name": "Example.app",
+    "display_name": "Example",
+    "zone": "example",
+    "state": "building",
+    "backend": "claude"
+  },
+  "settings": {
+    "scanRoots": [
+      "~/Developer"
+    ],
+    "scanDepth": 4,
+    "skipDirectories": [
+      ".worktrees"
+    ],
+    "cloneRoot": "~/Developer",
+    "gitHubOwners": [
+      "example"
+    ],
+    "protectedBranches": [
+      "main"
+    ],
+    "concurrency": 4
+  },
+  "sections": [
+    {
+      "name": "Apps",
+      "repos": [
+        {
+          "id": "GitHub/example/widget",
+          "name": "widget",
+          "path": "/Users/example/Developer/GitHub/example/widget",
+          "remote": "example/widget",
+          "provider": "github",
+          "kind": "repo",
+          "icon": "hammer",
+          "host": "example-host",
+          "surfaces": {
+            "agents": true,
+            "development": true,
+            "projects": true
+          },
+          "shared": false,
+          "fork": true,
+          "upstream": "example-upstream/widget"
+        },
+        {
+          "id": "Example/service",
+          "name": "service",
+          "path": "/Users/example/Developer/Example/service",
+          "remote": "Example/service",
+          "provider": "azure-devops",
+          "kind": "repo",
+          "icon": null,
+          "host": "example-host",
+          "surfaces": {
+            "agents": true,
+            "development": true,
+            "projects": false
+          },
+          "shared": false,
+          "fork": false,
+          "upstream": null
+        }
+      ]
+    },
+    {
+      "name": "Folders",
+      "repos": [
+        {
+          "id": "GitHub/example/widget",
+          "name": "notes",
+          "path": "/Users/example/Documents/notes",
+          "remote": null,
+          "provider": "local",
+          "kind": "folder",
+          "icon": "folder",
+          "host": "example-host",
+          "surfaces": {
+            "agents": true,
+            "development": false,
+            "projects": false
+          },
+          "shared": false,
+          "fork": false,
+          "upstream": null
+        }
+      ]
+    }
+  ]
+}
