@@ -352,10 +352,7 @@ public final class ProjectsModel: ObservableObject {
             var pending = containers.makeIterator()
             func addNext() {
                 guard let container = pending.next() else { return }
-                group.addTask {
-                    do { return (container, .success(try await provider.items(in: container))) }
-                    catch { return (container, .failure(error)) }
-                }
+                group.addTask { await read(container, from: provider) }
             }
             for _ in 0..<readLimit { addNext() }
             while let (container, result) = await group.next() {
@@ -370,6 +367,16 @@ public final class ProjectsModel: ObservableObject {
             }
             return (rows, errors.sorted(), failed)
         }
+    }
+
+    /// One container's items, or why they could not be read. The catch lives
+    /// here, not inline in the child task's closure: optimized builds of that
+    /// inline form let a child finish after its group was gone, which aborts
+    /// the app.
+    nonisolated static func read(_ container: String, from provider: any ProjectsProvider) async
+        -> (String, Result<[WorkItem], Error>) {
+        do { return (container, .success(try await provider.items(in: container))) }
+        catch { return (container, .failure(error)) }
     }
 
     private func loadPerson() {
