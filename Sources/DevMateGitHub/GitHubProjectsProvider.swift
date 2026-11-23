@@ -30,10 +30,16 @@ public struct GitHubProjectsProvider: ProjectsProvider {
 
     public func reference(for item: WorkItem) -> String { "\(gh.owner)/\(item.container)#\(item.number)" }
 
-    /// `gh` blocks, so each call runs off the caller's thread.
+    /// `gh` blocks on a process, so each call runs on a dispatch queue: never
+    /// on the main actor, and never on a Swift concurrency thread, whose small
+    /// pool a few slow reads would otherwise use up.
     private func off<T: Sendable>(_ work: @escaping @Sendable (GitHubCLI) throws -> T) async throws -> T {
         let gh = gh
-        return try await Task.detached(priority: .userInitiated) { try work(gh) }.value
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(with: Result { try work(gh) })
+            }
+        }
     }
 
     public func currentPerson() async throws -> String? {
