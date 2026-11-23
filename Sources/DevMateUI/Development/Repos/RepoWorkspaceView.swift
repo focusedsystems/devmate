@@ -8,10 +8,11 @@ import SwiftUI
 /// The Repos sidebar: the workspace's mode (Changes, History, Files) on top,
 /// then the registry's repositories in its sections, with a filter and sort.
 /// Status refreshes on appear and every 30 seconds while shown; fetch is on
-/// demand. Sort, grouping, filter and collapsed sections persist.
+/// demand. Sort, grouping, filter and collapsed sections persist. Dragging a
+/// row, or Move Up and Move Down, sets a custom order and switches to it.
 struct ReposListView: View {
     @ObservedObject var model: RepoWorkspaceModel
-    @AppStorage("devmate.repos.sort") private var sort: RepoSidebarSort = .name
+    @AppStorage("devmate.repos.sort") private var sort: RepoSidebarSort = .custom
     @AppStorage("devmate.repos.grouped") private var grouped = true
     @AppStorage("devmate.repos.filter") private var filter = ""
     /// Collapsed sections, newline-separated, so a new section starts open.
@@ -91,17 +92,17 @@ struct ReposListView: View {
         return List(selection: $model.selectedId) {
             if grouped {
                 ForEach(model.sections, id: \.name) { section in
-                    let repos = sort.sorted(section.repos.filter { visible.contains($0.id) }, statuses: model.statuses)
+                    let repos = model.arranged(section.repos.filter { visible.contains($0.id) }, sort: sort)
                     if !repos.isEmpty {
                         Section(isExpanded: expansion(section.name, forcedOpen: filtering)) {
-                            ForEach(repos) { row($0) }
+                            rows(repos)
                         } header: {
                             Text(section.name)
                         }
                     }
                 }
             } else {
-                ForEach(sort.sorted(model.listed.filter(matches), statuses: model.statuses)) { row($0) }
+                rows(model.arranged(model.listed.filter(matches), sort: sort))
             }
         }
         .listStyle(.sidebar)
@@ -118,7 +119,22 @@ struct ReposListView: View {
         }
     }
 
-    private func row(_ repo: DevRepo) -> some View {
+    /// One run of rows that drag reorders among themselves.
+    private func rows(_ repos: [DevRepo]) -> some View {
+        let shown = repos.map(\.id)
+        return ForEach(repos) { row($0, shown: shown) }
+            .onMove { source, destination in
+                model.move(shown, fromOffsets: source, toOffset: destination, sort: sort)
+                sort = .custom
+            }
+    }
+
+    private func moveRow(_ repo: DevRepo, by offset: Int, in shown: [String]) {
+        model.move(repo.id, by: offset, in: shown, sort: sort)
+        sort = .custom
+    }
+
+    private func row(_ repo: DevRepo, shown: [String]) -> some View {
         let hidden = model.hiddenIDs.contains(repo.id)
         return HStack(spacing: 6) {
             RepoListRow(repo: repo, status: model.statuses[repo.id], isFetching: model.isFetching.contains(repo.id))
@@ -135,14 +151,19 @@ struct ReposListView: View {
             }
         }
         .tag(repo.id)
-        .contextMenu { rowMenu(repo, hidden: hidden) }
+        .contextMenu { rowMenu(repo, hidden: hidden, shown: shown) }
     }
 
     @ViewBuilder
-    private func rowMenu(_ repo: DevRepo, hidden: Bool) -> some View {
+    private func rowMenu(_ repo: DevRepo, hidden: Bool, shown: [String]) -> some View {
         model.slots.repositoryMenu(repo)
         Divider()
         Button("Fetch") { Task { await model.fetch([repo.id]) } }
+        Divider()
+        Button("Move Up") { moveRow(repo, by: -1, in: shown) }
+            .disabled(!model.canMove(repo.id, by: -1, in: shown))
+        Button("Move Down") { moveRow(repo, by: 1, in: shown) }
+            .disabled(!model.canMove(repo.id, by: 1, in: shown))
         Divider()
         Button("Reveal in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: repo.localPath)])
@@ -201,6 +222,12 @@ struct ReposListView: View {
                     ForEach(RepoSidebarSort.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.inline)
+                Button("Reset Custom Order") {
+                    model.resetOrder()
+                    sort = .custom
+                }
+                .disabled(!model.hasCustomOrder)
+                .help("Go back to the app's order for this list")
                 Divider()
                 Toggle("Group by Section", isOn: $grouped)
                 if grouped {

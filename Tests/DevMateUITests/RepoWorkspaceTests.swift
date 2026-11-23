@@ -64,6 +64,69 @@ final class RepoWorkspaceTests: XCTestCase {
         XCTAssertEqual(workspace.allRepos.map(\.name), ["shown"])
     }
 
+    private func names(_ workspace: RepoWorkspaceModel, _ sort: RepoSidebarSort = .custom) -> [String] {
+        workspace.arranged(workspace.allRepos, sort: sort).map(\.name)
+    }
+
+    func testCustomOrderFallsBackToNameWithoutAnAppOrder() {
+        let workspace = model([repo("charlie"), repo("alpha"), repo("bravo")])
+        workspace.reloadRecords()
+        XCTAssertEqual(names(workspace), ["alpha", "bravo", "charlie"])
+        XCTAssertFalse(workspace.hasCustomOrder)
+    }
+
+    func testAppOrderLeadsAndUnnamedRepositoriesFollowByName() {
+        let workspace = model([repo("alpha"), repo("bravo"), repo("charlie"), repo("delta")])
+        workspace.preferredOrder = ["/tmp/charlie/", "example/alpha", "/tmp/missing"]
+        workspace.reloadRecords()
+        XCTAssertEqual(names(workspace), ["charlie", "alpha", "bravo", "delta"])
+        XCTAssertEqual(names(workspace, .name), ["alpha", "bravo", "charlie", "delta"])
+    }
+
+    func testDraggingSavesAnOrderThatReplacesTheAppOrder() {
+        let workspace = model([repo("alpha"), repo("bravo"), repo("charlie")])
+        workspace.preferredOrder = ["/tmp/charlie", "/tmp/bravo", "/tmp/alpha"]
+        workspace.reloadRecords()
+        let shown = workspace.arranged(workspace.allRepos, sort: .custom).map(\.id)
+        workspace.move(shown, fromOffsets: IndexSet(integer: 2), toOffset: 0, sort: .custom)
+        XCTAssertEqual(names(workspace), ["alpha", "charlie", "bravo"])
+        XCTAssertEqual(defaults.stringArray(forKey: "devmate.repos.order"),
+                       ["example/alpha", "example/charlie", "example/bravo"])
+
+        workspace.preferredOrder = ["/tmp/bravo"]
+        XCTAssertEqual(names(workspace), ["alpha", "charlie", "bravo"])
+
+        let reopened = model([repo("alpha"), repo("bravo"), repo("charlie")])
+        reopened.reloadRecords()
+        XCTAssertEqual(names(reopened), ["alpha", "charlie", "bravo"])
+
+        reopened.preferredOrder = ["/tmp/bravo"]
+        reopened.resetOrder()
+        XCTAssertEqual(names(reopened), ["bravo", "alpha", "charlie"])
+        XCTAssertNil(defaults.stringArray(forKey: "devmate.repos.order"))
+    }
+
+    func testMoveUpAndDownStayWithinTheShownRun() {
+        let workspace = model([repo("alpha"), repo("bravo"), repo("charlie"), repo("delta")])
+        workspace.reloadRecords()
+        let run = ["example/bravo", "example/delta"]
+        XCTAssertFalse(workspace.canMove("example/bravo", by: -1, in: run))
+        XCTAssertTrue(workspace.canMove("example/bravo", by: 1, in: run))
+        workspace.move("example/bravo", by: 1, in: run, sort: .custom)
+        XCTAssertEqual(names(workspace), ["alpha", "delta", "charlie", "bravo"])
+        workspace.move("example/bravo", by: -1, in: run.reversed(), sort: .custom)
+        XCTAssertEqual(names(workspace), ["alpha", "bravo", "charlie", "delta"])
+    }
+
+    func testReorderingUnderAnotherSortStartsFromWhatIsShown() {
+        let workspace = model([repo("charlie"), repo("alpha"), repo("bravo")])
+        workspace.preferredOrder = ["/tmp/charlie"]
+        workspace.reloadRecords()
+        let shown = workspace.arranged(workspace.allRepos, sort: .name).map(\.id)
+        workspace.move("example/alpha", by: 1, in: shown, sort: .name)
+        XCTAssertEqual(names(workspace), ["bravo", "alpha", "charlie"])
+    }
+
     func testHidingIsAPreferenceAndNeverWritesTheRegistry() {
         let shown = repo("shown")
         let workspace = model([shown, repo("other")])

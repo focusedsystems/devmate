@@ -119,6 +119,7 @@ public final class DevelopmentModel: ObservableObject {
     public init(provider: any DevelopmentProvider, source: RegistryRepoSource,
                 protectedBranches: Set<String> = ["main", "master"], cache: DiskCache? = nil,
                 repoSlots: RepoWorkspaceSlots = RepoWorkspaceSlots(), slots: DevelopmentSlots = DevelopmentSlots(),
+                repoOrder: [String] = [],
                 defaults: UserDefaults = .standard,
                 home: URL = FileManager.default.homeDirectoryForCurrentUser) {
         self.provider = provider
@@ -127,7 +128,7 @@ public final class DevelopmentModel: ObservableObject {
         self.defaults = defaults
         self.home = home
         repos = RepoWorkspaceModel(source: source, protectedBranches: protectedBranches, slots: repoSlots,
-                                   defaults: defaults)
+                                   preferredOrder: repoOrder, defaults: defaults)
         segment = Segment(rawValue: defaults.string(forKey: Self.segmentKey) ?? "") ?? .repos
         repoFilter = defaults.string(forKey: Self.filterKey)
         if let cached = cache?.load([DevCommit].self, key: "development.commits") { commits.value = cached.value }
