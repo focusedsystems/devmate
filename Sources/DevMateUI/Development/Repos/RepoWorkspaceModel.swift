@@ -27,12 +27,15 @@ final class RepoEditorDocument: Identifiable {
     }
 }
 
-/// How the sidebar orders repositories.
+/// How the sidebar orders repositories. Custom is the order the person set
+/// by dragging or Move Up and Move Down, else the app's preferred order, else
+/// by name.
 enum RepoSidebarSort: String, CaseIterable {
-    case name, recentlyChanged, mostChanges, mostBehind
+    case custom, name, recentlyChanged, mostChanges, mostBehind
 
     var title: String {
         switch self {
+        case .custom: "Custom Order"
         case .name: "Name"
         case .recentlyChanged: "Recently Changed"
         case .mostChanges: "Most Changes"
@@ -45,7 +48,7 @@ enum RepoSidebarSort: String, CaseIterable {
         return repos.sorted { a, b in
             let (x, y) = (statuses[a.id], statuses[b.id])
             switch self {
-            case .name: return byName(a, b)
+            case .custom, .name: return byName(a, b)
             case .recentlyChanged:
                 let (p, q) = (x?.lastCommitAt ?? .distantPast, y?.lastCommitAt ?? .distantPast)
                 return p != q ? p > q : byName(a, b)
@@ -57,6 +60,27 @@ enum RepoSidebarSort: String, CaseIterable {
                 return p != q ? p > q : byName(a, b)
             }
         }
+    }
+}
+
+/// Ranks for Custom Order.
+enum RepoOrder {
+    /// A path or id as compared against a checkout: paths expanded and
+    /// standardized, anything else as given.
+    static func key(_ entry: String) -> String {
+        let expanded = GitPaths.expand(entry)
+        return expanded.hasPrefix("/") ? (expanded as NSString).standardizingPath : entry
+    }
+
+    /// Ranked repositories first, by rank; the rest after them, keeping the
+    /// order they came in.
+    static func arrange(_ repos: [DevRepo], rank: (DevRepo) -> Int?) -> [DevRepo] {
+        var ranked: [(rank: Int, index: Int, repo: DevRepo)] = []
+        for (index, repo) in repos.enumerated() {
+            ranked.append((rank: rank(repo) ?? Int.max, index: index, repo: repo))
+        }
+        ranked.sort { a, b in a.rank != b.rank ? a.rank < b.rank : a.index < b.index }
+        return ranked.map { $0.repo }
     }
 }
 
@@ -76,14 +100,20 @@ public final class RepoWorkspaceModel: ObservableObject {
     private let defaults: UserDefaults
     private let fallbackProtected: Set<String>
     private static let hiddenKey = "devmate.repos.hidden"
+    private static let orderKey = "devmate.repos.order"
 
+    /// `preferredOrder` is the app's order for the sidebar, as checkout paths
+    /// (or registry ids), used until the person reorders the list.
     public init(source: RegistryRepoSource, protectedBranches: Set<String> = ["main", "master"],
-                slots: RepoWorkspaceSlots = RepoWorkspaceSlots(), defaults: UserDefaults = .standard) {
+                slots: RepoWorkspaceSlots = RepoWorkspaceSlots(), preferredOrder: [String] = [],
+                defaults: UserDefaults = .standard) {
         self.source = source
         self.fallbackProtected = protectedBranches
         self.slots = slots
         self.defaults = defaults
+        self.preferredOrder = preferredOrder
         hiddenIDs = Set(defaults.stringArray(forKey: Self.hiddenKey) ?? [])
+        savedOrder = defaults.stringArray(forKey: Self.orderKey)
         git.onError = { [weak self] title, message in self?.report(title: title, message) }
         git.onRefreshed = { [weak self] in await self?.workingTreeChanged() }
         git.unsavedEdits = { [weak self] in
@@ -98,6 +128,12 @@ public final class RepoWorkspaceModel: ObservableObject {
     /// Set when the registry could not be read and the last good list shows.
     @Published private(set) var registryBanner: String?
     @Published private(set) var hiddenIDs: Set<String>
+    /// The app's order for Custom Order, as checkout paths or registry ids.
+    /// Repositories it does not name follow, by name. The person's own order
+    /// replaces it once they move a row.
+    @Published public var preferredOrder: [String]
+    /// The person's order, by registry id, saved for this app alone.
+    @Published private(set) var savedOrder: [String]?
     /// The sidebar's Edit mode: visibility toggles on each row.
     @Published var isEditing = false
     @Published private(set) var statuses: [String: RepoStatus] = [:]
@@ -164,6 +200,62 @@ public final class RepoWorkspaceModel: ObservableObject {
         if hidden { hiddenIDs.insert(repo.id) } else { hiddenIDs.remove(repo.id) }
         defaults.set(hiddenIDs.sorted(), forKey: Self.hiddenKey)
         if !isEditing, selectedId == repo.id, hidden { selectedId = tracked.first?.id }
+    }
+
+    // MARK: - Order
+
+    /// Whether the person has set their own order.
+    var hasCustomOrder: Bool { savedOrder != nil }
+
+    /// `repos` in the order the sidebar shows them under `sort`.
+    func arranged(_ repos: [DevRepo], sort: RepoSidebarSort) -> [DevRepo] {
+        let fallback = sort.sorted(repos, statuses: statuses)
+        guard sort == .custom else { return fallback }
+        if let savedOrder {
+            let rank = Dictionary(savedOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+            return RepoOrder.arrange(fallback) { rank[$0.id] }
+        }
+        guard !preferredOrder.isEmpty else { return fallback }
+        var rank: [String: Int] = [:]
+        for (index, entry) in preferredOrder.enumerated() where rank[RepoOrder.key(entry)] == nil {
+            rank[RepoOrder.key(entry)] = index
+        }
+        return RepoOrder.arrange(fallback) { rank[RepoOrder.key($0.localPath)] ?? rank[$0.id] }
+    }
+
+    /// Moves rows within `shown`, the ids of one run of the sidebar in the
+    /// order it shows them, and saves the result as the custom order. Rows
+    /// outside the run keep their places.
+    func move(_ shown: [String], fromOffsets source: IndexSet, toOffset destination: Int, sort: RepoSidebarSort) {
+        var reordered = shown
+        reordered.move(fromOffsets: source, toOffset: destination)
+        let members = Set(shown)
+        var full = arranged(allRepos, sort: sort).map(\.id)
+        let places = full.indices.filter { members.contains(full[$0]) }
+        guard places.count == reordered.count else { return }
+        for (place, id) in zip(places, reordered) { full[place] = id }
+        guard full != savedOrder else { return }
+        savedOrder = full
+        defaults.set(full, forKey: Self.orderKey)
+    }
+
+    /// Whether `id` can move `offset` places within `shown`.
+    func canMove(_ id: String, by offset: Int, in shown: [String]) -> Bool {
+        guard let index = shown.firstIndex(of: id) else { return false }
+        return shown.indices.contains(index + offset)
+    }
+
+    /// Move Up (-1) and Move Down (+1).
+    func move(_ id: String, by offset: Int, in shown: [String], sort: RepoSidebarSort) {
+        guard canMove(id, by: offset, in: shown), let index = shown.firstIndex(of: id) else { return }
+        move(shown, fromOffsets: IndexSet(integer: index), toOffset: offset > 0 ? index + offset + 1 : index + offset,
+             sort: sort)
+    }
+
+    /// Drops the person's order, so the app's preferred order applies again.
+    func resetOrder() {
+        savedOrder = nil
+        defaults.removeObject(forKey: Self.orderKey)
     }
 
     /// Local status of every listed repository: no network.

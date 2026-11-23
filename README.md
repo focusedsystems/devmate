@@ -67,6 +67,15 @@ Repos is a full Git client. Anything that changes or discards work asks first,
 and nothing force-pushes. Apps add their own menu items and detail views through
 `RepoWorkspaceSlots` and `DevelopmentSlots`.
 
+The Repos sidebar's Custom Order is the person's own order once they drag a row
+or use Move Up or Move Down, saved per app. Until then it is the app's order, if
+it gives one, then by name. An app passes its order as checkout paths, and can
+change it later:
+
+```swift
+model.repos.preferredOrder = ["~/Developer/app", "~/Developer/docs"]
+```
+
 An app can withhold folders by name with `RepoWorkspaceSlots.withheld`. Git is told
 to exclude them, so a withheld file is never listed, shown, searched, counted,
 stashed or committed from the app. A host's diff that cannot be read with
