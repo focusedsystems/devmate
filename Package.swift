@@ -36,6 +36,7 @@ let package = Package(
         ),
         .testTarget(name: "DevMateGitTests", dependencies: ["DevMateCore", "DevMateGit"]),
         .testTarget(name: "DevMateGitHubTests", dependencies: ["DevMateCore", "DevMateGitHub"]),
+        .testTarget(name: "DevMateAzureTests", dependencies: ["DevMateCore", "DevMateAzure"]),
         .testTarget(name: "DevMateUITests", dependencies: ["DevMateCore", "DevMateGit", "DevMateUI"]),
     ],
     swiftLanguageModes: [.v6]
