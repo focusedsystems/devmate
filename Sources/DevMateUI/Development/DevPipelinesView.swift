@@ -95,6 +95,12 @@ struct DevPipelinesView: View {
             Spacer()
             if let run = model.run {
                 Button("View Log") { logRun = run }
+                Button("Copy Log") { model.copyLog(of: run) }
+                    .help("Copy the log with the run's details")
+                if model.slots.sendRunToAgent != nil {
+                    Button("Send to Agent") { model.sendToAgent(run) }
+                        .help("Send what failed and the log's last lines to the agent in this repository")
+                }
                 Button("Re-run") { model.rerun(run, failedOnly: false) }
                     .disabled(!run.isFinished || model.isBusy(run))
                     .help("Run every job of this run again")
@@ -122,6 +128,10 @@ struct DevPipelinesView: View {
         Button("Cancel Run…") { model.requestCancel(run) }
             .disabled(run.isFinished || model.isBusy(run))
         Divider()
+        Button("Copy Log") { model.copyLog(of: run) }
+        if model.slots.sendRunToAgent != nil {
+            Button("Send to Agent") { model.sendToAgent(run) }
+        }
         Button("Copy Link") { DevWeb.copy(run.url) }
     }
 
@@ -187,7 +197,14 @@ private struct DevRunLogSheet: View {
                 }
                 Spacer()
                 if isLoading { ProgressView().controlSize(.small) }
-                Button("Copy Log") { DevWeb.copy(text) }.disabled(text.isEmpty)
+                Button("Copy Log") { DevWeb.copy(RunReport.copy(run, log: text)) }
+                    .disabled(text.isEmpty)
+                    .help("Copy the whole log with the run's details; select text to copy part of it")
+                if model.slots.sendRunToAgent != nil {
+                    Button("Send to Agent") { model.sendToAgent(run, log: text); dismiss() }
+                        .disabled(text.isEmpty)
+                        .help("Send what failed and the log's last lines to the agent in this repository")
+                }
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
             .padding(12)
