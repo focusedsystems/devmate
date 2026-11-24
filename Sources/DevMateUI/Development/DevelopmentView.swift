@@ -53,24 +53,20 @@ public struct DevelopmentView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            Picker("Development View", selection: $model.segment) {
-                ForEach(model.segments, id: \.self) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .help("Development views")
-        }
-        ToolbarItemGroup(placement: .primaryAction) {
-            if [.commits, .pipelines, .pullRequests].contains(model.segment) { repoFilterMenu }
-            if model.segment == .repos { DevelopmentGraphsButton() }
-            model.slots.toolbar()
+        // Refresh leads, then the views, always shown rather than in a menu.
+        ToolbarItemGroup(placement: .navigation) {
             Button {
                 if let onRefresh { onRefresh() } else { model.load(force: true) }
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .help("Read the list again")
+            DevSegmentBar(selection: $model.segment, segments: model.segments)
+        }
+        ToolbarItemGroup(placement: .primaryAction) {
+            if [.commits, .pipelines, .pullRequests].contains(model.segment) { repoFilterMenu }
+            if model.segment == .repos { DevelopmentGraphsButton() }
+            model.slots.toolbar()
         }
     }
 
