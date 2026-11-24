@@ -113,6 +113,7 @@ extension View {
 /// below its cards.
 struct WidgetRowLayout: Layout {
     static let fullRow = 1_000
+    private static let maxLayoutWidth: CGFloat = 1_000_000
 
     var spacing: CGFloat = 12
     var minUnitWidth: CGFloat = 240
@@ -120,8 +121,17 @@ struct WidgetRowLayout: Layout {
 
     private struct Placement { var index: Int; var x: CGFloat; var y: CGFloat; var width: CGFloat; var rowHeight: CGFloat = 0 }
 
-    private func arrange(width: CGFloat, subviews: Subviews) -> (placements: [Placement], height: CGFloat) {
+    /// The width to lay out in. SwiftUI proposes an infinite width to measure
+    /// a view's largest size, and a scroll view can pass that here, so an
+    /// unbounded or missing proposal falls back to one unit per card.
+    private func usableWidth(_ proposed: CGFloat?, count: Int) -> CGFloat {
+        if let proposed, proposed.isFinite, proposed < Self.maxLayoutWidth { return max(0, proposed) }
+        return CGFloat(count) * (minUnitWidth + spacing)
+    }
+
+    private func arrange(width proposedWidth: CGFloat, subviews: Subviews) -> (placements: [Placement], height: CGFloat) {
         guard !subviews.isEmpty else { return ([], 0) }
+        let width = usableWidth(proposedWidth, count: subviews.count)
         let rawSpans = subviews.map { max(1, $0[WidgetSpan.self]) }
         let unitsPerRow = wraps
             ? max(1, Int((width + spacing) / (minUnitWidth + spacing)))
@@ -151,7 +161,7 @@ struct WidgetRowLayout: Layout {
     }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? CGFloat(subviews.count) * (minUnitWidth + spacing)
+        let width = usableWidth(proposal.width, count: subviews.count)
         return CGSize(width: width, height: arrange(width: width, subviews: subviews).height)
     }
 
