@@ -4,34 +4,40 @@ import Foundation
 /// here, so an app cannot change the delimiter around untrusted text.
 public enum LaneItemProvider: Hashable, Sendable {
     case gitHub
+    case azureDevOps
 
     var displayName: String {
         switch self {
         case .gitHub: return "GitHub"
+        case .azureDevOps: return "Azure DevOps"
         }
     }
 
     var openTag: String {
         switch self {
         case .gitHub: return "<untrusted-github-issue>"
+        case .azureDevOps: return "<untrusted-azure-devops-work-item>"
         }
     }
 
     var closeTag: String {
         switch self {
         case .gitHub: return "</untrusted-github-issue>"
+        case .azureDevOps: return "</untrusted-azure-devops-work-item>"
         }
     }
 
     var planLabel: String {
         switch self {
         case .gitHub: return "Milestone"
+        case .azureDevOps: return "Iteration"
         }
     }
 
     func commentsCommand(number: Int) -> String {
         switch self {
         case .gitHub: return "gh issue view \(number) --comments"
+        case .azureDevOps: return "az boards work-item show --id \(number)"
         }
     }
 }
