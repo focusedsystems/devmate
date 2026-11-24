@@ -47,9 +47,14 @@ public struct DevelopmentSlots {
     public var toolbar: () -> AnyView
     /// Shown in the pull request viewer, under the overview.
     public var pullDetail: (DevPullRequest) -> AnyView
+    /// Hands a run to the agent working in its repository, with a prompt
+    /// DevMate built from the run and its log. Nil hides Send to Agent.
+    public var sendRunToAgent: (@MainActor (DevPipelineRun, String) -> Void)?
 
     public init(toolbar: @escaping () -> AnyView = { AnyView(EmptyView()) },
-                pullDetail: @escaping (DevPullRequest) -> AnyView = { _ in AnyView(EmptyView()) }) {
+                pullDetail: @escaping (DevPullRequest) -> AnyView = { _ in AnyView(EmptyView()) },
+                sendRunToAgent: (@MainActor (DevPipelineRun, String) -> Void)? = nil) {
+        self.sendRunToAgent = sendRunToAgent
         self.toolbar = toolbar
         self.pullDetail = pullDetail
     }
@@ -345,6 +350,28 @@ public final class DevelopmentModel: ObservableObject {
                 // The host takes a moment to queue the new attempt.
                 try? await Task.sleep(for: .seconds(2))
                 loadRuns(force: true)
+            } catch {
+                actionError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Read a run's log, then copy it with its header line, or hand it to
+    /// the app's agent with the whole text in a private temporary file.
+    func copyLog(of run: DevPipelineRun) {
+        Task {
+            do { DevWeb.copy(RunReport.copy(run, log: try await log(of: run))) } catch { actionError = error.localizedDescription }
+        }
+    }
+
+    func sendToAgent(_ run: DevPipelineRun, log known: String? = nil) {
+        guard let send = slots.sendRunToAgent else { return }
+        Task {
+            do {
+                let text: String
+                if let known { text = known } else { text = try await log(of: run) }
+                let file = RunReport.writeFullLog(RunReport.copy(run, log: text), runID: run.runID)
+                send(run, RunReport.prompt(run, log: text, fullLog: file))
             } catch {
                 actionError = error.localizedDescription
             }
