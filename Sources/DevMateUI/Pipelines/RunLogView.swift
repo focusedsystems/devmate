@@ -6,6 +6,7 @@ import SwiftUI
 /// `##[...]` colouring, collapsible groups, clickable addresses and the
 /// system find bar. It is read-only; text can be selected and copied.
 struct RunLogView: NSViewRepresentable {
+    typealias NSViewType = NSScrollView
     let parsed: RunLogParser.Parsed
     let collapsed: Set<Int>
     let identity: String

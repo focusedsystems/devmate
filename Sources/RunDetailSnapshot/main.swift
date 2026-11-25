@@ -11,7 +11,7 @@ let outputDirectory = URL(fileURLWithPath: CommandLine.arguments.dropFirst().fir
 try? FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 _ = NSApplication.shared
 
-let clock = Date(timeIntervalSince1970: 1_790_000_000)
+let clock = Date().addingTimeInterval(-3 * 3600)
 func at(_ seconds: Double) -> Date { clock.addingTimeInterval(seconds) }
 
 let esc = "\u{1B}"
@@ -117,25 +117,56 @@ struct FixtureHeader: View {
     }
 }
 
-@MainActor func render(_ model: RunDetailModel, name: String, dark: Bool, size: NSSize) {
+/// One drawing of the view in a window that is never shown.
+@MainActor func draw(_ model: RunDetailModel, dark: Bool, size: NSSize, rendering: RunLogRendering, asPDF: Bool) -> NSImage? {
     let view = RunDetailView(model: model) { FixtureHeader() }
+        .environment(\.runLogRendering, rendering)
         .frame(width: size.width, height: size.height)
         .background(Color(nsColor: .windowBackgroundColor))
     let host = NSHostingView(rootView: view)
-    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-    let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
-    window.contentView = host
-    window.appearance = host.appearance
+    let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+    NSApp.appearance = appearance
+    NSAppearance.current = appearance
+    host.appearance = appearance
     host.frame = NSRect(origin: .zero, size: size)
-    for _ in 0..<20 {
+    let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+    window.appearance = appearance
+    window.contentView = host
+    host.frame = NSRect(origin: .zero, size: size)
+    for _ in 0..<40 {
         host.layoutSubtreeIfNeeded()
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
     }
     host.layoutSubtreeIfNeeded()
     host.displayIfNeeded()
-    guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+    if asPDF { return NSImage(data: host.dataWithPDF(inside: host.bounds)) }
+    guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
     rep.size = size
     host.cacheDisplay(in: host.bounds, to: rep)
+    let image = NSImage(size: size)
+    image.addRepresentation(rep)
+    return image
+}
+
+@MainActor func render(_ model: RunDetailModel, name: String, dark: Bool, size: NSSize) {
+    // SwiftUI draws in the first pass and the log's text view in the second.
+    guard let base = draw(model, dark: dark, size: size, rendering: .blank, asPDF: false),
+          let logs = draw(model, dark: dark, size: size, rendering: .native, asPDF: true),
+          let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
+                                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+          let context = NSGraphicsContext(bitmapImageRep: rep) else { return }
+    let canvas = NSRect(x: 0, y: 0, width: rep.pixelsWide, height: rep.pixelsHigh)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = context
+    NSColor.white.setFill()
+    canvas.fill()
+    base.draw(in: canvas)
+    // Only the log pane comes from the second drawing: below the header and
+    // right of the outline, whose width is the view's default.
+    NSBezierPath(rect: NSRect(x: 291 * 2, y: 0, width: canvas.width - 291 * 2, height: canvas.height - 121 * 2)).addClip()
+    logs.draw(in: canvas, from: .zero, operation: .multiply, fraction: 1)
+    NSGraphicsContext.restoreGraphicsState()
     guard let png = rep.representation(using: .png, properties: [:]) else { return }
     let url = outputDirectory.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png")
     try? png.write(to: url)

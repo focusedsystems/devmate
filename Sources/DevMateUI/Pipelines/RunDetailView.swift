@@ -8,6 +8,7 @@ public struct RunDetailView<Header: View>: View {
     @ObservedObject var model: RunDetailModel
     let header: Header
     @Environment(\.devMateFontScale) private var fontScale
+    @AppStorage("devmate.runDetail.sidebarWidth") private var sidebarWidth: Double = 290
 
     public init(model: RunDetailModel, @ViewBuilder header: () -> Header) {
         self.model = model
@@ -18,9 +19,10 @@ public struct RunDetailView<Header: View>: View {
         VStack(spacing: 0) {
             header
             Divider()
-            HSplitView {
+            HStack(spacing: 0) {
                 RunOutlineList(model: model)
-                    .frame(minWidth: 220, idealWidth: 290, maxWidth: 460)
+                    .frame(width: sidebarWidth)
+                RunSplitHandle(width: $sidebarWidth)
                 RunLogPane(model: model, fontScale: fontScale)
                     .frame(minWidth: 360, maxWidth: .infinity)
             }
@@ -39,6 +41,63 @@ public struct RunDetailView<Header: View>: View {
 extension RunDetailView where Header == EmptyView {
     public init(model: RunDetailModel) {
         self.init(model: model) { EmptyView() }
+    }
+}
+
+// MARK: - Snapshots
+
+/// How the log is drawn. Snapshot tools draw the view twice, once with the
+/// log left blank, because a window that is never shown does not paint
+/// SwiftUI around a text view; they lay the second drawing over the first.
+public enum RunLogRendering: Sendable {
+    case native, blank
+}
+
+private struct RunLogRenderingKey: EnvironmentKey {
+    static let defaultValue = RunLogRendering.native
+}
+
+public extension EnvironmentValues {
+    var runLogRendering: RunLogRendering {
+        get { self[RunLogRenderingKey.self] }
+        set { self[RunLogRenderingKey.self] = newValue }
+    }
+}
+
+// MARK: - Divider
+
+/// The line between the outline and the log. Drag it to resize the outline;
+/// the width is remembered.
+struct RunSplitHandle: View {
+    @Binding var width: Double
+    @State private var startWidth: Double?
+    static let range: ClosedRange<Double> = 220...520
+
+    var body: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: 1)
+            .overlay {
+                Color.clear
+                    .frame(width: 9)
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                    }
+                    .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { value in
+                            let base = startWidth ?? width
+                            startWidth = base
+                            width = min(max(base + value.translation.width, Self.range.lowerBound), Self.range.upperBound)
+                        }
+                        .onEnded { _ in startWidth = nil })
+            }
+            .accessibilityElement()
+            .accessibilityLabel("Outline width")
+            .accessibilityAdjustableAction { direction in
+                let step = 20.0
+                width = min(max(width + (direction == .increment ? step : -step), Self.range.lowerBound), Self.range.upperBound)
+            }
     }
 }
 
@@ -191,6 +250,7 @@ private struct RunDuration: View {
 struct RunLogPane: View {
     @ObservedObject var model: RunDetailModel
     let fontScale: Double
+    @Environment(\.runLogRendering) private var rendering
 
     var body: some View {
         VStack(spacing: 0) {
@@ -244,10 +304,14 @@ struct RunLogPane: View {
                                                      ? "This step has not run." : "This step wrote nothing."))
         } else {
             let parsed = model.parsedLog
+            if rendering == .blank {
+                Color(nsColor: .textBackgroundColor).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
             RunLogView(parsed: parsed, collapsed: model.collapsedGroups,
                        identity: model.log.selection.map { "\($0)" } ?? "", follow: model.follow && model.state(of: model.selection)?.isActive == true,
                        findRequests: model.findRequests, fontSize: (11 * fontScale).rounded(),
                        onToggleGroup: { model.toggleGroup($0) }, onFollowChange: { model.follow = $0 })
+            }
         }
     }
 }
