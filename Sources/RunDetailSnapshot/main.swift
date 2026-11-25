@@ -73,7 +73,7 @@ struct FixtureRun: RunDetailProvider {
         let apply = RunJob(id: "j3", name: "Apply the change", state: .waiting, startedAt: at(90), logID: "log-job", steps: [
             step("s10", "Initialize job", .succeeded, 90, 2, log: "log-job"),
             RunStep(id: "s11", name: "Approve the plan", state: .running, startedAt: at(92),
-                    logID: "log-job", identifier: "11111111-aaaa-bbbb-cccc-000000000001", task: "ManualValidation@0"),
+                    logID: "log-job", identifier: "approval-one", task: "ManualValidation@0"),
             step("s12", "Apply the plan", .pending, 0, 0),
             step("s13", "Finalize Job", .pending, 0, 0),
         ])
@@ -90,7 +90,7 @@ struct FixtureRun: RunDetailProvider {
     }
 
     func approvals() async throws -> [RunApproval] {
-        [RunApproval(id: "11111111-aaaa-bbbb-cccc-000000000001", kind: .manualValidation,
+        [RunApproval(id: "approval-one", kind: .manualValidation,
                      instructions: "Review the plan in the previous step. Resume only if no resources are destroyed.",
                      createdAt: at(92), approvers: ["Platform Team", "Sample User"], stageName: "Apply",
                      stepName: "Approve the plan", startedAt: at(92), timeoutMinutes: 1440)]

@@ -18,7 +18,7 @@ final class AzureRunDetailTests: XCTestCase {
       {"id":"st2","type":"Stage","name":"Ship","state":"inProgress","order":2},
       {"id":"cp","parentId":"st2","type":"Checkpoint","name":"Checkpoint","state":"inProgress","order":1},
       {"id":"ap","parentId":"cp","type":"Checkpoint.Approval","name":"Approval","state":"inProgress","order":1,
-       "identifier":"AAAA1111-0000-0000-0000-000000000000"}
+       "identifier":"APPROVAL-ONE"}
     ]}
     """
 
@@ -34,7 +34,7 @@ final class AzureRunDetailTests: XCTestCase {
         XCTAssertEqual(build.jobs[0].steps[1].issues, ["exit 1"])
         XCTAssertEqual(build.jobs[0].steps[0].duration(), 4)
         let ship = timeline.stages[1]
-        XCTAssertEqual(ship.jobs.first?.steps.first?.identifier, "AAAA1111-0000-0000-0000-000000000000")
+        XCTAssertEqual(ship.jobs.first?.steps.first?.identifier, "APPROVAL-ONE")
         XCTAssertTrue(timeline.isActive)
     }
 
@@ -47,7 +47,7 @@ final class AzureRunDetailTests: XCTestCase {
         let records = try AzureJSON.decoder.decode(AzureRunDetail.Timeline.self, from: Data(json.utf8)).records ?? []
         let pending = try AzureJSON.decoder.decode(AzureRunDetail.Approvals.self, from: Data("""
         {"value":[
-          {"id":"aaaa1111-0000-0000-0000-000000000000","instructions":"Check it","createdOn":"2026-01-01T10:00:00Z",
+          {"id":"approval-one","instructions":"Check it","createdOn":"2026-01-01T10:00:00Z",
            "steps":[{"assignedApprover":{"displayName":"Sample Team"}}],"minRequiredApprovers":1},
           {"id":"other","pipeline":{"owner":{"id":999}}}
         ]}
@@ -60,7 +60,7 @@ final class AzureRunDetailTests: XCTestCase {
     }
 
     func testApprovalHoldsItsStepInTheOutline() throws {
-        let timeline = try AzureRunDetail.timeline(from: Data(json.utf8)).marking(waiting: ["aaaa1111-0000-0000-0000-000000000000"])
+        let timeline = try AzureRunDetail.timeline(from: Data(json.utf8)).marking(waiting: ["approval-one"])
         XCTAssertEqual(timeline.stages[1].jobs[0].steps[0].state, .waiting)
         XCTAssertEqual(timeline.activeSelection, .step(job: "cp", step: "ap"))
     }
