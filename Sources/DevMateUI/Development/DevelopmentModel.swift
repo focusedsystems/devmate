@@ -384,6 +384,13 @@ public final class DevelopmentModel: ObservableObject {
         return try await Self.offMainThrowing { try provider.log(of: run, in: repo) }
     }
 
+    /// What the run view reads from, or nil when the host cannot show a run's
+    /// stages, jobs and steps.
+    func runDetailProvider(for run: DevPipelineRun) -> (any RunDetailProvider)? {
+        guard let repo = try? resolve(run.repoID) else { return nil }
+        return provider.runDetail(for: run, in: repo)
+    }
+
     public func isBusy(_ run: DevPipelineRun) -> Bool { busyRuns.contains(run.id) }
 
     // MARK: Pull requests

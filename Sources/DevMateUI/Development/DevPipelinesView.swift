@@ -21,7 +21,7 @@ struct DevPipelinesView: View {
                 if model.runs.value.contains(where: { !$0.isFinished }) { model.loadRuns(force: true) }
             }
         }
-        .sheet(item: $logRun) { run in DevRunLogSheet(model: model, run: run) }
+        .sheet(item: $logRun) { run in DevRunSheet(model: model, run: run) }
         .confirmationDialog("Cancel this run?", isPresented: cancelPresented, titleVisibility: .visible,
                             presenting: model.pendingCancel) { _ in
             Button("Cancel Run", role: .destructive) { model.confirmCancel() }
@@ -225,4 +225,62 @@ private struct DevRunLogSheet: View {
             isLoading = false
         }
     }
+}
+
+/// A run opened from the list: the stages, jobs and steps with the selected
+/// one's log when the host can show them, else the run's one log.
+private struct DevRunSheet: View {
+    @ObservedObject var model: DevelopmentModel
+    let run: DevPipelineRun
+    private let usesOutline: Bool
+    @StateObject private var detail: RunDetailModel
+    @Environment(\.dismiss) private var dismiss
+
+    init(model: DevelopmentModel, run: DevPipelineRun) {
+        self.model = model
+        self.run = run
+        let provider = model.runDetailProvider(for: run)
+        usesOutline = provider != nil
+        _detail = StateObject(wrappedValue: RunDetailModel(provider: provider ?? NoRunDetail(),
+                                                           runName: "\(run.pipeline) \(run.title)"))
+    }
+
+    var body: some View {
+        if usesOutline {
+            RunDetailView(model: detail) { header }
+                .frame(minWidth: 960, minHeight: 600)
+        } else {
+            DevRunLogSheet(model: model, run: run)
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            DevRunStateLabel(run: run).labelStyle(.iconOnly).font(.title3)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(run.title).appFont(.headline).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text("\(run.repo) \u{00B7} \(run.pipeline)")
+                    if let branch = run.branch { Label(branch, systemImage: "arrow.triangle.branch").labelStyle(.titleAndIcon) }
+                    if let duration = run.duration() { Text(DevWeb.duration(duration)).monospacedDigit() }
+                }
+                .appFont(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Cancel Run\u{2026}") { model.requestCancel(run) }
+                .disabled(run.isFinished || model.isBusy(run))
+            Button("Re-run") { model.rerun(run, failedOnly: false) }
+                .disabled(!run.isFinished || model.isBusy(run))
+            Button("Copy Link") { DevWeb.copy(run.url) }
+            Button("Open in Browser") { DevWeb.open(run.url) }
+            Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+        }
+        .controlSize(.small)
+        .padding(12)
+    }
+}
+
+private struct NoRunDetail: RunDetailProvider {
+    func timeline() async throws -> RunTimeline { RunTimeline() }
+    func log(job: RunJob, step: RunStep?) async throws -> String { "" }
 }

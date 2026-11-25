@@ -75,6 +75,11 @@ public struct GitHubDevelopmentProvider: DevelopmentProvider {
         try gh.cancel(repo: name, runID: run.runID)
     }
 
+    public func runDetail(for run: DevPipelineRun, in repo: DevRepo) -> (any RunDetailProvider)? {
+        let (gh, name) = client(repo)
+        return GitHubRunDetail(gh: gh, repo: name, runID: run.runID)
+    }
+
     public func log(of run: DevPipelineRun, in repo: DevRepo) throws -> String {
         try require(run.repoID, in: repo)
         let (gh, name) = client(repo)

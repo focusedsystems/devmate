@@ -235,6 +235,9 @@ public protocol DevelopmentProvider: Sendable {
     func rerun(_ run: DevPipelineRun, in repo: DevRepo, failedOnly: Bool) throws
     func cancel(_ run: DevPipelineRun, in repo: DevRepo) throws
     func log(of run: DevPipelineRun, in repo: DevRepo) throws -> String
+    /// The run's stages, jobs, steps and logs, for the run view. Nil when the
+    /// host cannot show them, and the run opens as one log.
+    func runDetail(for run: DevPipelineRun, in repo: DevRepo) -> (any RunDetailProvider)?
 
     func pullRequests(in repo: DevRepo) throws -> [DevPullRequest]
     func detail(of pull: DevPullRequest, in repo: DevRepo) throws -> DevPullDetail
@@ -244,4 +247,8 @@ public protocol DevelopmentProvider: Sendable {
     /// Checks out exactly the commit the request was judged at, in a worktree
     /// of `repo`. The lane opened there is always a plain shell.
     func checkOut(_ request: SafeLaneRequest, in repo: DevRepo) throws -> URL
+}
+
+public extension DevelopmentProvider {
+    func runDetail(for run: DevPipelineRun, in repo: DevRepo) -> (any RunDetailProvider)? { nil }
 }
