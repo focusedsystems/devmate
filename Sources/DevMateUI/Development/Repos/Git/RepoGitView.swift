@@ -347,16 +347,8 @@ struct RepoGitView: View {
                         Divider()
                     }
                     if state.filterVisible, state.focusedPanel != .browse {
-                        HStack {
-                            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                            TextField("Filter", text: Bindable(state).filter)
-                                .textFieldStyle(.plain)
-                            Button {
-                                state.filter = ""
-                                state.filterVisible = false
-                            } label: { Image(systemName: "xmark.circle.fill") }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(.secondary)
+                        GlassSearchField(text: Bindable(state).filter, prompt: "Filter") {
+                            state.filterVisible = false
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
