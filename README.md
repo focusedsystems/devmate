@@ -81,6 +81,39 @@ to exclude them, so a withheld file is never listed, shown, searched, counted,
 stashed or committed from the app. A host's diff that cannot be read with
 certainty is held back whole.
 
+## Run view
+
+Opening a run in Pipelines shows its stages, jobs and steps in a sidebar and
+the selected one's log beside it, as the host's web page does. The sidebar is a
+native outline: stages are headers, jobs disclose their steps, a step that has
+not run shows a hollow circle, and the row holding an approval says "waiting".
+The log has line numbers, ANSI and `##[section]`, `##[command]`, `##[warning]`
+and `##[error]` colouring, groups that collapse, clickable addresses, the
+system find bar, and follows a running step. Left and Right collapse and expand,
+Command-[ and Command-] go back and forward.
+
+A provider that can show this returns a `RunDetailProvider` from
+`runDetail(for:in:)`. `AzureRunDetail` reads a build over the REST API with a
+token the app supplies; `AzureCLITokens` is one that asks the person's `az`.
+`GitHubRunDetail` reads a workflow run through a transport the app supplies, or
+through `gh`. An app can also show the run view on its own, under its own
+header:
+
+```swift
+let model = RunDetailModel(
+    provider: AzureRunDetail(organization: "example", project: "app", buildID: 1, token: { try await signIn.token() }),
+    runName: "Build 1"
+)
+RunDetailView(model: model) { MyRunHeader() }
+```
+
+Add `RunDetailCommands()` to the app's commands so every action is in a menu.
+A waiting approval shows `RunApprovalCard`; answering it writes to the live
+run, so the card asks first.
+
+`swift run RunDetailSnapshot <folder>` draws the view from made-up fixtures
+and writes PNGs, without opening a window.
+
 ## Checks
 
 The zone check looks for private detail in tracked files, commit messages and

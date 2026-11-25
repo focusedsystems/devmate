@@ -10,16 +10,26 @@ import Foundation
 /// empty), and re-running only the failed jobs of a run.
 public struct AzureDevelopmentProvider: DevelopmentProvider {
     public let cli: AzureCLI
+    /// Signs the run view's requests in. Defaults to the `az` login; an app
+    /// with its own sign-in passes its token here.
+    public let token: AzureTokenProvider
 
     /// The most diff or log text read into the viewer.
     static let textLimit = 2_000_000
 
-    public init(cli: AzureCLI) {
+    public init(cli: AzureCLI, token: AzureTokenProvider? = nil) {
         self.cli = cli
+        let tokens = AzureCLITokens(executable: cli.executable)
+        self.token = token ?? { try await tokens.token() }
     }
 
-    public init(organization: String, defaultProject: String? = nil) {
-        self.init(cli: AzureCLI(organization: organization, defaultProject: defaultProject))
+    public init(organization: String, defaultProject: String? = nil, token: AzureTokenProvider? = nil) {
+        self.init(cli: AzureCLI(organization: organization, defaultProject: defaultProject), token: token)
+    }
+
+    public func runDetail(for run: DevPipelineRun, in repo: DevRepo) -> (any RunDetailProvider)? {
+        guard let (project, _) = try? cli.address(of: repo) else { return nil }
+        return AzureRunDetail(organization: cli.organization, project: project, buildID: run.runID, token: token)
     }
 
     public var kind: RepoProviderKind { .azureDevOps }

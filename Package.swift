@@ -34,6 +34,7 @@ let package = Package(
             dependencies: ["DevMateCore"],
             resources: [.copy("Fixtures")]
         ),
+        .executableTarget(name: "RunDetailSnapshot", dependencies: ["DevMateCore", "DevMateUI"]),
         .testTarget(name: "DevMateGitTests", dependencies: ["DevMateCore", "DevMateGit"]),
         .testTarget(name: "DevMateGitHubTests", dependencies: ["DevMateCore", "DevMateGitHub"]),
         .testTarget(name: "DevMateAzureTests", dependencies: ["DevMateCore", "DevMateAzure"]),
