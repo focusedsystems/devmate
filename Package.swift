@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "DevMate",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS("27.0")],
     products: [
         // Models, provider capabilities, the repo registry and lane safety.
         .library(name: "DevMateCore", targets: ["DevMateCore"]),

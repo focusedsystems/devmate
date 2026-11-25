@@ -23,7 +23,7 @@ included.
   never starts an agent, for any author. Starting one is a separate step the
   person takes, after seeing any risk findings. Do not add an agent-start path
   to the checkout API.
-- **Swift 6 language mode, macOS 14 minimum.** UI follows the mac-arsed-mac-app
+- **Swift 6 language mode, macOS 27 minimum.** UI follows the mac-arsed-mac-app
   conventions.
 
 ## Working
