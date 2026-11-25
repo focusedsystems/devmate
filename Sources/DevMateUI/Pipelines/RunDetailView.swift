@@ -311,7 +311,9 @@ private struct RunDetailModelKey: FocusedValueKey {
     typealias Value = RunDetailModel
 }
 
-extension FocusedValues {
+public extension FocusedValues {
+    /// The run view in the focused window, so an app can route its own Back,
+    /// Forward and Find commands to it while it has the keyboard.
     var runDetailModel: RunDetailModel? {
         get { self[RunDetailModelKey.self] }
         set { self[RunDetailModelKey.self] = newValue }
@@ -322,21 +324,29 @@ extension FocusedValues {
 /// items work while a run's view is the focused one.
 public struct RunDetailCommands: Commands {
     @FocusedValue(\.runDetailModel) private var model
+    private let navigation: Bool
 
-    public init() {}
+    /// `navigation` false leaves out Back, Forward and Find in Log, for an
+    /// app that already owns Command-[, Command-] and Command-F and routes
+    /// them to the run view itself through `FocusedValues.runDetailModel`.
+    public init(navigation: Bool = true) {
+        self.navigation = navigation
+    }
 
     public var body: some Commands {
         CommandMenu("Run") {
-            Button("Back") { model?.goBack() }
-                .keyboardShortcut("[", modifiers: .command)
-                .disabled(model?.canGoBack != true)
-            Button("Forward") { model?.goForward() }
-                .keyboardShortcut("]", modifiers: .command)
-                .disabled(model?.canGoForward != true)
-            Divider()
-            Button("Find in Log") { model?.requestFind() }
-                .keyboardShortcut("f", modifiers: .command)
-                .disabled(model?.selection == nil)
+            if navigation {
+                Button("Back") { model?.goBack() }
+                    .keyboardShortcut("[", modifiers: .command)
+                    .disabled(model?.canGoBack != true)
+                Button("Forward") { model?.goForward() }
+                    .keyboardShortcut("]", modifiers: .command)
+                    .disabled(model?.canGoForward != true)
+                Divider()
+                Button("Find in Log") { model?.requestFind() }
+                    .keyboardShortcut("f", modifiers: .command)
+                    .disabled(model?.selection == nil)
+            }
             Button("View Raw Log") { model?.showRawLog() }
                 .keyboardShortcut("l", modifiers: [.command, .option])
                 .disabled(model?.selection == nil || model?.log.text.isEmpty != false)
