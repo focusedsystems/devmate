@@ -40,4 +40,14 @@ final class GitHubRunDetailTests: XCTestCase {
         XCTAssertFalse(tests.contains("uploading"))
         XCTAssertFalse(tests.contains("setting up"))
     }
+
+    func testAnOversizedJobLogIsCappedBeforeItIsParsed() async throws {
+        let huge = (0..<50_000).map { "2026-01-01T10:00:\(String(format: "%02d", $0 % 60)).0000000Z output line \($0)" }
+            .joined(separator: "\n")
+        let detail = GitHubRunDetail(repository: "example/app", runID: 1, logLimit: 2_000) { _ in huge }
+        let job = RunJob(id: "77", name: "build", state: .succeeded, logID: "77")
+        let text = try await detail.log(job: job, step: nil)
+        XCTAssertLessThanOrEqual(text.utf8.count, 2_000)
+        XCTAssertTrue(text.hasSuffix("output line 49999"))
+    }
 }

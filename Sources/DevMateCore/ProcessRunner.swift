@@ -32,9 +32,11 @@ public enum ProcessRunner {
     }
 
     /// Runs the program and waits for it. Returns nil when it could not be
-    /// started or was stopped at the time limit.
+    /// started or was stopped at the time limit. With `outputLimit`, only the
+    /// last that many bytes of its output are kept.
     public static func run(_ executable: String, _ arguments: [String], directory: URL? = nil,
-                           environment extra: [String: String] = [:], timeout: TimeInterval) -> Result? {
+                           environment extra: [String: String] = [:], timeout: TimeInterval,
+                           outputLimit: Int? = nil) -> Result? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -69,13 +71,26 @@ public enum ProcessRunner {
             errorData.data = err.fileHandleForReading.readDataToEndOfFile()
             group.leave()
         }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
+        let output: String
+        if let outputLimit {
+            // Read in pieces and keep only the tail, so a very large answer
+            // never sits whole in memory.
+            var tail = TailBuffer(limit: outputLimit)
+            while true {
+                let chunk = out.fileHandleForReading.availableData
+                if chunk.isEmpty { break }
+                tail.append(contentsOf: chunk)
+            }
+            output = tail.text
+        } else {
+            output = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        }
         group.wait()
         process.waitUntilExit()
         timer.cancel()
         if process.terminationReason == .uncaughtSignal { return nil }
         return Result(status: process.terminationStatus,
-                      output: String(decoding: data, as: UTF8.self),
+                      output: output,
                       error: String(decoding: errorData.data, as: UTF8.self))
     }
 

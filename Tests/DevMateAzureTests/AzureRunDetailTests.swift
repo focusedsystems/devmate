@@ -64,4 +64,17 @@ final class AzureRunDetailTests: XCTestCase {
         XCTAssertEqual(timeline.stages[1].jobs[0].steps[0].state, .waiting)
         XCTAssertEqual(timeline.activeSelection, .step(job: "cp", step: "ap"))
     }
+
+    func testAnOversizedLogStreamKeepsOnlyItsTail() async throws {
+        let line = "2026-01-01T10:00:00.0000000Z a long line of output that repeats\n"
+        let stream = AsyncStream<UInt8> { continuation in
+            for number in 0..<20_000 {
+                for byte in "\(line)final \(number)\n".utf8 { continuation.yield(byte) }
+            }
+            continuation.finish()
+        }
+        let text = try await AzureRunDetail.tail(of: stream, limit: 1_000)
+        XCTAssertLessThanOrEqual(text.utf8.count, 1_000)
+        XCTAssertTrue(text.hasSuffix("final 19999\n"))
+    }
 }

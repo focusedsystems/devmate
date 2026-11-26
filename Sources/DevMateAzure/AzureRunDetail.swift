@@ -48,11 +48,13 @@ public struct AzureRunDetail: RunDetailProvider {
     private let token: AzureTokenProvider
     private let session: URLSession
 
-    /// A single log read stops here; the tail is kept.
-    static let logLimit = 4_000_000
+    /// The most of a single log kept; a longer one keeps its tail.
+    public var logLimit: Int
+    public static let defaultLogLimit = 4_000_000
 
-    public init(organization: String, project: String, buildID: Int, token: @escaping AzureTokenProvider,
-                session: URLSession = .shared) {
+    public init(organization: String, project: String, buildID: Int, logLimit: Int = AzureRunDetail.defaultLogLimit,
+                token: @escaping AzureTokenProvider, session: URLSession = .shared) {
+        self.logLimit = logLimit
         self.organization = AzureCLI.normalized(organization)
         self.project = project
         self.buildID = buildID
@@ -73,6 +75,11 @@ public struct AzureRunDetail: RunDetailProvider {
         var request = request
         request.setValue("Bearer \(try await token())", forHTTPHeaderField: "Authorization")
         let (data, response) = try await session.data(for: request)
+        try Self.check(response)
+        return data
+    }
+
+    private static func check(_ response: URLResponse) throws {
         guard let http = response as? HTTPURLResponse else { throw RunDetailError("No answer from Azure DevOps.") }
         guard (200..<300).contains(http.statusCode) else {
             switch http.statusCode {
@@ -82,7 +89,13 @@ public struct AzureRunDetail: RunDetailProvider {
             default: throw RunDetailError("Azure DevOps answered \(http.statusCode).")
             }
         }
-        return data
+    }
+
+    /// Reads a body as it arrives and keeps only its last `limit` bytes.
+    static func tail<Bytes: AsyncSequence>(of bytes: Bytes, limit: Int) async throws -> String where Bytes.Element == UInt8 {
+        var buffer = TailBuffer(limit: limit)
+        for try await byte in bytes { buffer.append(byte) }
+        return buffer.text
     }
 
     // MARK: Timeline
@@ -202,9 +215,11 @@ public struct AzureRunDetail: RunDetailProvider {
         guard let logID = step?.logID ?? (step == nil ? job.logID : nil), !logID.isEmpty else { return "" }
         var request = URLRequest(url: try address("build/builds/\(buildID)/logs/\(logID)", apiVersion: "7.0"))
         request.setValue("text/plain", forHTTPHeaderField: "Accept")
-        let data = try await send(request)
-        let text = String(decoding: data, as: UTF8.self)
-        return text.utf8.count > Self.logLimit ? String(decoding: data.suffix(Self.logLimit), as: UTF8.self) : text
+        request.setValue("Bearer \(try await token())", forHTTPHeaderField: "Authorization")
+        // Streamed, so a log of any size is never held whole in memory.
+        let (bytes, response) = try await session.bytes(for: request)
+        try Self.check(response)
+        return try await Self.tail(of: bytes, limit: logLimit)
     }
 
     public func taskDetails(job: RunJob, step: RunStep) async throws -> [(name: String, value: String)] {
