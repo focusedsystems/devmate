@@ -49,7 +49,9 @@ struct RunLogView: NSViewRepresentable {
         scroll.drawsBackground = true
         scroll.backgroundColor = .textBackgroundColor
         scroll.findBarPosition = .aboveContent
+        scroll.clipsToBounds = true
         let ruler = LineNumberRuler(scrollView: scroll, orientation: .verticalRuler)
+        ruler.clipsToBounds = true
         ruler.clientView = view
         scroll.verticalRulerView = ruler
         scroll.hasVerticalRuler = true
@@ -285,8 +287,11 @@ final class LineNumberRuler: NSRulerView {
     override func drawHashMarksAndLabels(in rect: NSRect) {
         guard let view = clientView as? NSTextView, let layout = view.layoutManager, let container = view.textContainer,
               let scroll = scrollView, !lineStarts.isEmpty else { return }
+        // A view does not clip to its bounds by default, so the rect asked
+        // for can reach past the ruler; filling all of it paints over the
+        // rest of the window.
         NSColor.textBackgroundColor.setFill()
-        rect.fill()
+        rect.intersection(bounds).fill()
         let visible = scroll.contentView.bounds
         let glyphs = layout.glyphRange(forBoundingRect: visible, in: container)
         let characters = layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
