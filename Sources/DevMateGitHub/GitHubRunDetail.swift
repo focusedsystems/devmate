@@ -12,19 +12,27 @@ public struct GitHubRunDetail: RunDetailProvider {
 
     public var repository: String
     public var runID: Int
+    /// The most of a job's log kept; a longer one keeps its tail.
+    public var logLimit: Int
     private let read: Transport
 
+    public static let defaultLogLimit = 4_000_000
+
     /// `repository` is `owner/name`.
-    public init(repository: String, runID: Int, transport: @escaping Transport) {
+    public init(repository: String, runID: Int, logLimit: Int = GitHubRunDetail.defaultLogLimit,
+                transport: @escaping Transport) {
         self.repository = repository
         self.runID = runID
+        self.logLimit = logLimit
         self.read = transport
     }
 
     /// Reads through the `gh` the person is signed in to.
     public init(gh: GitHubCLI, repo: String, runID: Int) {
         self.init(repository: gh.slug(repo), runID: runID) { path in
-            try await Task.detached { try gh.run(["api", path], timeout: 120) }.value
+            // A log is read in pieces and only its tail kept.
+            let limit = path.hasSuffix("/logs") ? Self.defaultLogLimit : nil
+            return try await Task.detached { try gh.run(["api", path], timeout: 120, outputLimit: limit) }.value
         }
     }
 
@@ -90,7 +98,8 @@ public struct GitHubRunDetail: RunDetailProvider {
 
     public func log(job: RunJob, step: RunStep?) async throws -> String {
         guard let id = job.logID else { return "" }
-        let text = try await read("repos/\(repository)/actions/jobs/\(id)/logs")
+        // A transport that cannot stop early still hands back at most this.
+        let text = TailBuffer.tail(of: try await read("repos/\(repository)/actions/jobs/\(id)/logs"), limit: logLimit)
         guard let step else { return text }
         return Self.slice(text, step: step, of: job)
     }

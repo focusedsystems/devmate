@@ -24,9 +24,11 @@ public struct GitHubCLI: Sendable {
     // MARK: Running
 
     @discardableResult
-    public func run(_ arguments: [String], directory: URL? = nil, timeout: TimeInterval = 40) throws -> String {
+    public func run(_ arguments: [String], directory: URL? = nil, timeout: TimeInterval = 40,
+                    outputLimit: Int? = nil) throws -> String {
         guard let executable else { throw GitHubCLIError("The GitHub CLI (gh) is not installed.") }
-        guard let result = ProcessRunner.run(executable, arguments, directory: directory, timeout: timeout) else {
+        guard let result = ProcessRunner.run(executable, arguments, directory: directory, timeout: timeout,
+                                             outputLimit: outputLimit) else {
             throw GitHubCLIError("gh did not answer within \(Int(timeout)) seconds.")
         }
         guard result.status == 0 else {
