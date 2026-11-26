@@ -165,7 +165,9 @@ struct FixtureHeader: View {
     // Only the log pane comes from the second drawing: below the header and
     // right of the outline, whose width is the view's default.
     NSBezierPath(rect: NSRect(x: 291 * 2, y: 0, width: canvas.width - 291 * 2, height: canvas.height - 121 * 2)).addClip()
-    logs.draw(in: canvas, from: .zero, operation: .multiply, fraction: 1)
+    // Whichever of the two is darker in a light drawing, lighter in a dark one,
+    // so the text lands on the first drawing without shading what both drew.
+    logs.draw(in: canvas, from: .zero, operation: dark ? .lighten : .darken, fraction: 1)
     NSGraphicsContext.restoreGraphicsState()
     guard let png = rep.representation(using: .png, properties: [:]) else { return }
     let url = outputDirectory.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png")
