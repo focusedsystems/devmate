@@ -11,10 +11,11 @@ public struct DevelopmentView: View {
     private let onRefresh: (() -> Void)?
     private let showsNavigation: Bool
 
-    /// `onRefresh` replaces the toolbar's default refresh, for an app that
-    /// refreshes more than this tab. `showsNavigation: false` leaves out the
-    /// refresh button and the segment bar, for an app that supplies its own
-    /// control for both and sets `model.segment` itself.
+    /// The lists read themselves again every two minutes and when the window
+    /// becomes key, and the view has no refresh button. `onRefresh` replaces
+    /// that read, for an app that refreshes more than this tab.
+    /// `showsNavigation: false` leaves out the segment bar, for an app that
+    /// supplies its own control and sets `model.segment` itself.
     public init(model: DevelopmentModel, onRefresh: (() -> Void)? = nil, showsNavigation: Bool = true) {
         self.model = model
         self.onRefresh = onRefresh
@@ -32,6 +33,24 @@ public struct DevelopmentView: View {
             }
             .onAppear { model.load() }
             .onChange(of: model.segment) { _, segment in model.load(segment) }
+            .task { await keepFresh() }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+                // Another window of the app becoming key is not this view's concern.
+                guard (note.object as? NSWindow)?.isVisible == true else { return }
+                refresh(olderThan: 30)
+            }
+    }
+
+    private func refresh(olderThan age: TimeInterval) {
+        if let onRefresh { onRefresh() } else { model.refreshIfOlder(than: age) }
+    }
+
+    private func keepFresh() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(120))
+            guard !Task.isCancelled, NSApp.isActive else { continue }
+            refresh(olderThan: 90)
+        }
     }
 
     @ViewBuilder
@@ -57,15 +76,9 @@ public struct DevelopmentView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        // Refresh leads, then the views, always shown rather than in a menu.
+        // The views, always shown rather than in a menu.
         if showsNavigation {
             ToolbarItemGroup(placement: .navigation) {
-                Button {
-                    if let onRefresh { onRefresh() } else { model.load(force: true) }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .help("Read the list again")
                 DevSegmentBar(selection: $model.segment, segments: model.segments)
             }
         }
