@@ -147,7 +147,7 @@ struct RepoGitView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .popover(item: $newBranchAction, arrowEdge: .bottom) { action in
+        .transientPopover(item: $newBranchAction, arrowEdge: .bottom) { action in
             GitCommitActionSheet(action: action, currentBranch: state.currentBranch) { request in
                 await state.run(request)
             }
@@ -181,7 +181,7 @@ struct RepoGitView: View {
                 Label("Help", systemImage: "questionmark.circle")
             }
             .help("Show shortcuts (?)")
-            .popover(isPresented: Bindable(state).helpVisible, arrowEdge: .bottom) { GitHelpSheet() }
+            .transientPopover(isPresented: Bindable(state).helpVisible, arrowEdge: .bottom) { GitHelpSheet() }
             Spacer()
             agentsMarker
             Button {
@@ -240,7 +240,7 @@ struct RepoGitView: View {
         }
         .fixedSize()
         .help("Save changes aside, or bring a stash back")
-        .popover(isPresented: Bindable(state).stashComposerVisible, arrowEdge: .bottom) {
+        .transientPopover(isPresented: Bindable(state).stashComposerVisible, arrowEdge: .bottom) {
             StashComposer { message, includeUntracked in
                 await state.saveStash(message: message, includeUntracked: includeUntracked)
             }
