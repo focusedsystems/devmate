@@ -9,12 +9,16 @@ import SwiftUI
 public struct DevelopmentView: View {
     @ObservedObject private var model: DevelopmentModel
     private let onRefresh: (() -> Void)?
+    private let showsNavigation: Bool
 
     /// `onRefresh` replaces the toolbar's default refresh, for an app that
-    /// refreshes more than this tab.
-    public init(model: DevelopmentModel, onRefresh: (() -> Void)? = nil) {
+    /// refreshes more than this tab. `showsNavigation: false` leaves out the
+    /// refresh button and the segment bar, for an app that supplies its own
+    /// control for both and sets `model.segment` itself.
+    public init(model: DevelopmentModel, onRefresh: (() -> Void)? = nil, showsNavigation: Bool = true) {
         self.model = model
         self.onRefresh = onRefresh
+        self.showsNavigation = showsNavigation
     }
 
     public var body: some View {
@@ -54,14 +58,16 @@ public struct DevelopmentView: View {
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         // Refresh leads, then the views, always shown rather than in a menu.
-        ToolbarItemGroup(placement: .navigation) {
-            Button {
-                if let onRefresh { onRefresh() } else { model.load(force: true) }
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
+        if showsNavigation {
+            ToolbarItemGroup(placement: .navigation) {
+                Button {
+                    if let onRefresh { onRefresh() } else { model.load(force: true) }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .help("Read the list again")
+                DevSegmentBar(selection: $model.segment, segments: model.segments)
             }
-            .help("Read the list again")
-            DevSegmentBar(selection: $model.segment, segments: model.segments)
         }
         ToolbarItemGroup(placement: .primaryAction) {
             if [.commits, .pipelines, .pullRequests].contains(model.segment) { repoFilterMenu }

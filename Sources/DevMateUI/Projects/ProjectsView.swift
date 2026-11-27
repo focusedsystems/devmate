@@ -7,9 +7,13 @@ import SwiftUI
 /// uses the provider's words.
 public struct ProjectsView: View {
     @ObservedObject var model: ProjectsModel
+    private let showsRefresh: Bool
 
-    public init(model: ProjectsModel) {
+    /// `showsRefresh: false` leaves out the toolbar's refresh button, for an
+    /// app that supplies its own and calls `model.refresh()`.
+    public init(model: ProjectsModel, showsRefresh: Bool = true) {
         self.model = model
+        self.showsRefresh = showsRefresh
     }
 
     public var body: some View {
@@ -45,12 +49,14 @@ public struct ProjectsView: View {
                     }
                     .help("New \(model.vocabulary.itemNoun) (⌘N)")
                 }
-                Button {
-                    model.refresh()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                if showsRefresh {
+                    Button {
+                        model.refresh()
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .help("Read the \(model.vocabulary.itemNoun.lowercased())s again (⌘R)")
                 }
-                .help("Read the \(model.vocabulary.itemNoun.lowercased())s again (⌘R)")
             }
         }
         .searchable(text: $model.query.search, placement: .toolbar,
