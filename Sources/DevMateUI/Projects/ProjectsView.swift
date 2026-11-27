@@ -7,13 +7,11 @@ import SwiftUI
 /// uses the provider's words.
 public struct ProjectsView: View {
     @ObservedObject var model: ProjectsModel
-    private let showsRefresh: Bool
 
-    /// `showsRefresh: false` leaves out the toolbar's refresh button, for an
-    /// app that supplies its own and calls `model.refresh()`.
-    public init(model: ProjectsModel, showsRefresh: Bool = true) {
+    /// The items read themselves again every minute and when the window
+    /// becomes key, so the view has no refresh button.
+    public init(model: ProjectsModel) {
         self.model = model
-        self.showsRefresh = showsRefresh
     }
 
     public var body: some View {
@@ -49,19 +47,22 @@ public struct ProjectsView: View {
                     }
                     .help("New \(model.vocabulary.itemNoun) (⌘N)")
                 }
-                if showsRefresh {
-                    Button {
-                        model.refresh()
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                    .help("Read the \(model.vocabulary.itemNoun.lowercased())s again (⌘R)")
-                }
             }
         }
         .searchable(text: $model.query.search, placement: .toolbar,
                     prompt: "Filter \(model.vocabulary.itemNoun.lowercased())s")
         .onAppear { model.load() }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard !Task.isCancelled, NSApp.isActive else { continue }
+                model.refreshIfOlder(than: 45)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+            guard (note.object as? NSWindow)?.isVisible == true else { return }
+            model.refreshIfOlder(than: 20)
+        }
         .sheet(isPresented: $model.showingNewItem) {
             WorkItemEditorSheet(model: model, mode: .create(container: model.newItemContainer))
         }

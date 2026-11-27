@@ -21,6 +21,19 @@ public struct DevLoaded<Value: Sendable>: Sendable {
     }
 }
 
+extension DevLoaded where Value: Equatable {
+    /// The state after a read finished. The rows are replaced only when they
+    /// differ, so an unchanged background read leaves the list as it was.
+    func finished(with rows: Value, errors: [String]) -> DevLoaded {
+        var next = self
+        if next.value != rows { next.value = rows }
+        next.errors = errors
+        next.loadedAt = Date()
+        next.isLoading = false
+        return next
+    }
+}
+
 /// Rows and failures collected from several threads.
 private final class Gathered<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
@@ -174,6 +187,25 @@ public final class DevelopmentModel: ObservableObject {
 
     // MARK: Loading
 
+    /// Reads the open segment's list again when it is older than `age`
+    /// seconds. For an app's own cadence and for the window becoming key: it
+    /// is quiet, replacing rows only when they changed.
+    public func refreshIfOlder(than age: TimeInterval) {
+        let loaded: Date?
+        switch segment {
+        case .commits: loaded = commits.loadedAt
+        case .pipelines: loaded = runs.loadedAt
+        case .pullRequests: loaded = pulls.loadedAt
+        case .skills: loaded = skills.loadedAt
+        case .repos:
+            // The workspace reads its own status every half minute while shown.
+            repos.reloadRecords()
+            return
+        }
+        guard loaded.map({ Date().timeIntervalSince($0) > age }) ?? true else { return }
+        load(force: true)
+    }
+
     /// Reads the open segment's list when it is stale, or always with `force`.
     public func load(_ segment: Segment? = nil, force: Bool = false) {
         repos.reloadRecords()
@@ -221,7 +253,7 @@ public final class DevelopmentModel: ObservableObject {
         Task {
             let (rows, errors) = await gather { provider, repo in try provider.commits(in: repo) }
             let sorted = rows.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
-            commits = DevLoaded(value: sorted, loadedAt: Date(), errors: errors)
+            commits = commits.finished(with: sorted, errors: errors)
             cache?.save(sorted, key: "development.commits")
         }
     }
@@ -232,7 +264,7 @@ public final class DevelopmentModel: ObservableObject {
         Task {
             let (rows, errors) = await gather { provider, repo in try provider.runs(in: repo) }
             let sorted = rows.sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
-            runs = DevLoaded(value: sorted, loadedAt: Date(), errors: errors)
+            runs = runs.finished(with: sorted, errors: errors)
             cache?.save(sorted, key: "development.runs")
         }
     }
@@ -243,7 +275,7 @@ public final class DevelopmentModel: ObservableObject {
         Task {
             let (rows, errors) = await gather { provider, repo in try provider.pullRequests(in: repo) }
             let sorted = rows.sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
-            pulls = DevLoaded(value: sorted, loadedAt: Date(), errors: errors)
+            pulls = pulls.finished(with: sorted, errors: errors)
             cache?.save(sorted, key: "development.pulls")
         }
     }

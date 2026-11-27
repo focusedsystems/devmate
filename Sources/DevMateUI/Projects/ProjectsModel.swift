@@ -306,6 +306,16 @@ public final class ProjectsModel: ObservableObject {
         if mode == .queries { loadQueries() }
     }
 
+    /// A quiet read for a cadence or the window becoming key: nothing when the
+    /// list was read within `age` seconds, and no change on screen unless the
+    /// data changed.
+    public func refreshIfOlder(than age: TimeInterval) {
+        guard loadedAt.map({ Date().timeIntervalSince($0) > age }) ?? true else { return }
+        load(force: true)
+        if detail != nil { loadDetail() }
+        if mode == .queries { loadQueries() }
+    }
+
     public func load(force: Bool = false) {
         let isStale = loadedAt.map { Date().timeIntervalSince($0) > Self.freshness } ?? true
         guard !isLoading, force || isStale else { return }
@@ -329,9 +339,9 @@ public final class ProjectsModel: ObservableObject {
                 let read = Set(merged.map(\.id))
                 merged += items.filter { failed.contains($0.container) && !read.contains($0.id) }
             }
-            items = merged
+            if items != merged { items = merged }
             loadedAt = Date()
-            loadErrors = errors
+            if loadErrors != errors { loadErrors = errors }
             isLoading = false
             changedDuringLoad = []
             configuration.cache?.save(merged, key: Self.cacheKey)
@@ -393,8 +403,8 @@ public final class ProjectsModel: ObservableObject {
         Task {
             do {
                 let found = try await provider.boards()
-                boards = found
-                boardError = nil
+                if boards != found { boards = found }
+                if boardError != nil { boardError = nil }
                 if let id = boardID, !found.contains(where: { $0.id == id }) { boardID = nil }
                 if let id = boardID { loadBoard(id) }
             } catch {
