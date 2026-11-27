@@ -269,9 +269,11 @@ struct RunLogPane: View {
                         Divider()
                     }
                     logBody
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(nsColor: .textBackgroundColor))
     }
 
@@ -294,14 +296,31 @@ struct RunLogPane: View {
         .padding(.vertical, 10)
     }
 
+    /// What an empty log means depends on the step: one still running has
+    /// no log yet, because the host publishes a step's log when it ends.
+    private var emptyLog: (title: String, symbol: String, detail: String) {
+        if case .stage? = model.selection {
+            return ("No Stage Log", "list.bullet.rectangle", "A stage has no log of its own. Choose one of its jobs or steps.")
+        }
+        let state = model.state(of: model.selection)
+        if state == .pending {
+            return ("Not Started", "circle.dashed", "This step has not run.")
+        }
+        if state == .waiting {
+            return ("Waiting", "hand.raised", "This step is waiting for an approval or a check.")
+        }
+        if state?.isActive == true {
+            return ("Running", "hourglass", "The log appears here when the host publishes it, usually as the step finishes.")
+        }
+        return ("No Log Output", "doc.text", "This step wrote nothing.")
+    }
+
     @ViewBuilder
     private var logBody: some View {
         if let error = model.log.error, model.log.text.isEmpty {
             ContentUnavailableView("No Log", systemImage: "doc.text", description: Text(error))
         } else if model.log.text.isEmpty, !model.log.isLoading {
-            ContentUnavailableView("No Log Output", systemImage: "doc.text",
-                                   description: Text(model.state(of: model.selection) == .pending
-                                                     ? "This step has not run." : "This step wrote nothing."))
+            ContentUnavailableView(emptyLog.title, systemImage: emptyLog.symbol, description: Text(emptyLog.detail))
         } else {
             let parsed = model.parsedLog
             if rendering == .blank {

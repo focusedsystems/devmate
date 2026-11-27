@@ -140,11 +140,13 @@ public final class RunDetailModel: ObservableObject {
     }
 
     public func title(for selection: RunSelection?) -> String {
+        if case .stage(let id)? = selection { return timeline.stages.first { $0.id == id }?.name ?? "" }
         guard let selection, let node = selectionNode(selection) else { return "" }
         return node.step?.name ?? node.job?.name ?? ""
     }
 
     public func state(of selection: RunSelection?) -> RunNodeState? {
+        if case .stage(let id)? = selection { return timeline.stages.first { $0.id == id }?.state }
         guard let selection, let node = selectionNode(selection) else { return nil }
         return node.step?.state ?? node.job?.state
     }
